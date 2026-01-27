@@ -1,0 +1,404 @@
+---
+title: "Geomarketing avec R - Session 1"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  html_notebook: default
+---
+
+```{css, echo=FALSE}
+.spoiler {
+  visibility: hidden;
+}
+
+.spoiler::before {
+  visibility: visible;
+  content: "Answer"
+}
+
+.spoiler:hover {
+  visibility: visible;
+}
+
+.spoiler:hover::before {
+  display: none;
+}
+```
+
+```{r setup,echo=FALSE}
+knitr::opts_knit$set(root.dir = "C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/")
+```
+
+# Introduction
+
+Bienvenue dans la première des 3 séances d'application du cours de "Données de l'entreprise" du M1 MIASH. Ce cours a plusieurs objectifs:
+
+-   Appliquer les concepts théoriques vu en parallèle dans les sessions théoriques du cours.
+-   Apprendre à collecter des données d'entreprises et de cadrage géolocalisées via des sources opendata (INSEE, datagouv.fr,...)
+-   Parfaire votre maitrise générale de R et s'approprier les outils de cartographie sous R.
+-   Réaliser des représentations graphiques, notamment des cartes, pour traduire un contexte concurrentiel localisé et proposer une analyse de la concurrence dans le cadre d'une nouvelle implantation d'un supermarché dans une commune en Isère.
+
+L'évaluation consistera en deux notes:
+
+-   Une note de contrôle continu, qui prendra en compte votre participation et implication en cours, ainsi que des rendus à préparer entre les séances.
+-   Un dossier à réaliser en groupe de 3 d'analyse du marché de la grande distribution dans une zone de l'agglomération grenobloise afin de déboucher sur proposition de localisation d'un nouveau point de vente, justifiée par des cartes et des indices concurrentiels. Ce dossier devra aussi contenir une deuxième partie portant sur l'analyse du marché de la distribution bio à Grenoble.
+
+# 1. Identifier et collecter les données
+
+## 1.1 Identification
+
+Listez les données que vous devriez idéalement avoir en votre possession pour réaliser une étude de géomarketing/analyse de la concurrence.
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#BlockName">
+
+Show/Hide
+
+</button>
+
+::: {#BlockName .collapse}
+```         
+- des données localisées (avec cordonnées géographiques) sur les supermarchés et hypermarchés;
+- des données localisées (à l'échelle de l'IRIS) sur des variables socio-démographiques et économiques des communes/quartiers
+```
+:::
+
+<br/>
+
+## 1.2 Collecte
+
+-   Trouvez et téléchargez ces données, en open-access (Attention à la projection géograpahique).
+
+Sources possibles: insee.fr, datagouv.fr, public.opendatasoft.com, geo.data.gouv.fr...
+
+<br/>
+
+-   Pour les données sur les supermarchés:
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block2">
+
+Show/Hide
+
+</button>
+
+::: {#Block2 .collapse}
+```         
+pour les données sur les supermarchés: la base SIRENE géolocalisée (format shapefile) sur public.opendatasoft.com
+ Filter par code NAF avant de télécharger les données.
+ NAF :
+    Section G : Commerce ; réparation d'automobiles et de motocycles
+    Division 47 : Commerce de détail, à l'exception des automobiles et des motocycles
+    Groupe 47.1 : Commerce de détail en magasin non spécialisé
+    Classe 47.11 : Commerce de détail en magasin non spécialisé à prédominance alimentaire
+    Sous-classe 47.11D : Supermarchés et Sous-classe 47.11F : Hypermarchés
+    (47.11B <120m² & 47.11C >120m² & <400m²)
+```
+:::
+
+<br/>
+
+-   Pour les données sur les IRIS:
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block3">
+
+Show/Hide
+
+</button>
+
+::: {#Block3 .collapse}
+```         
+pour les données sur les IRIS: 
+  => pour le shapefile avec le contour géolocalisée des IRIS, il vaut mieux réutiliser public.opendatasoft.com p
+  our être sûr de pas ne pas avoir de problème de projection
+  
+  => pour les variables socio-démographiques au niveau de IRIS: toutes les données existentes sur 
+  https://www.insee.fr/fr/statistiques?debut=0&categorie=3&geo=ICQ-1
+  Heuresement, une base compile déjà l'ensemble des différentes 
+  bases INSEE au niveau des IRIS pour la France entière (fichier pour l'Isère seulement sur Moodle)
+  https://www.data.gouv.fr/fr/datasets/1526-variables-regroupees-en-19-classes-sur-les-49461-iris-de-france/
+  Pensez à télécharger le fichier de métadonnées 
+```
+:::
+
+<br/>
+
+-   Créez un dossier "Geomarketing" et placez-y les fichiers téléchargés. Votre dossier doit ressembler à ceci:
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block4">
+
+Show/Hide
+
+</button>
+
+::: {#Block4 .collapse}
+```{r,echo=FALSE}
+setwd("C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/")
+knitr::include_graphics("C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/folder.PNG",dpi = NA)
+```
+:::
+
+# 2. Cartographier les données
+
+## 2.1 Importation des données dans R
+
+-   Préparation des packages et working directory
+
+```{r,results='hide'}
+setwd("C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/")
+install.packages("pacman",repos = "http://cran.us.r-project.org")
+pacman::p_load(dplyr, ggplot2, sf,readr,readxl,tmap,tmaptools)
+```
+
+-   Charger les données dans R
+
+```{r,}
+iris_shp<-st_read("georef-france-iris-millesime.shp")
+sirene_shp<-st_read("dataseed-sirene-2.shp")
+iris_data <- read_excel("iris_isere.xlsx")
+```
+
+-   Filter pour ne garder que les infos sur Grenoble & seulement les établissements encore ouverts
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block0">
+
+Show/Hide
+
+</button>
+
+::: {#Block0 .collapse}
+```{r}
+sirene_grenoble<-sirene_shp%>%filter(libellecomm=="GRENOBLE"&etatadminis=="Actif")
+#Carte en 2017
+#sirene_grenoble<-sirene_shp%>%filter(libellecomm=="GRENOBLE"&datecreatio<"2017-12-31"&datedernier>"2017-12-31")
+iris_grenoble<-iris_shp%>%filter(com_name=="Grenoble")
+```
+:::
+
+-   Fusionner les différentes variables des résidences principales en une seule variable
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block5">
+
+Show/Hide
+
+</button>
+
+::: {#Block5 .collapse}
+```{r}
+iris_data$nb_residence_princ<-iris_data$Res_princ_30_moins_40_m2+iris_data$Res_princ_40_moins_60_m2+iris_data$Res_princ_60_moins_80_m2+iris_data$Res_princ_80_moins_100_m2+iris_data$Res_princ_100_moins_120_m2
+```
+:::
+
+-   Fusionner le shapefile IRIS avec les variables socio-démographiques
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block6">
+
+Show/Hide
+
+</button>
+
+::: {#Block6 .collapse}
+```{r}
+colnames(iris_grenoble)[20]<-"CODE_IRIS"
+iris_grenoble<-merge(iris_grenoble,iris_data[,c("CODE_IRIS","1er_quartile_euro","3e_quartile_euro",'Actifs_15-64_ans2',"Pop_15-64_ans","Delta_Pop_20-64_ans","nb_residence_princ")],by="CODE_IRIS")
+colnames(iris_grenoble)[c(31:36)]<-c("premier_quartile_revenu","troisieme_quartile_revenu","Actif_total","Pop_15_64","Delta_pop_20_64ans","Nb_residence_principale")
+iris_grenoble <-iris_grenoble %>%mutate_at(vars(premier_quartile_revenu, troisieme_quartile_revenu, Actif_total,Pop_15_64,Delta_pop_20_64ans,Nb_residence_principale),  ~ na_if(., 0))
+```
+:::
+
+-   Exemples de cartes simples avec ggplot() et geom_sf()
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block7">
+
+Show/Hide
+
+</button>
+
+::: {#Block7 .collapse}
+```{r}
+ggplot(data = iris_grenoble) +
+  geom_sf(aes(fill = Actif_total)) +scale_fill_viridis_c(option="rocket",begin = 1,end=0)+
+  xlab("Longitude") + ylab("Latitude")
+
+ggplot(data = iris_grenoble) +
+  geom_sf(aes(fill = Pop_15_64)) +scale_fill_viridis_c(option="rocket",begin = 1,end=0)+
+  xlab("Longitude") + ylab("Latitude")
+
+ggplot(data = iris_grenoble) +
+  geom_sf(aes(fill = premier_quartile_revenu)) +scale_fill_viridis_c(option="rocket",begin = 1,end=0)+
+  xlab("Longitude") + ylab("Latitude")
+
+ggplot(data = iris_grenoble) +
+  geom_sf(aes(fill = Nb_residence_principale)) +scale_fill_viridis_c(option="rocket",begin = 1,end=0)+
+  xlab("Longitude") + ylab("Latitude")
+ggplot(data = iris_grenoble) +
+  geom_sf() +  geom_sf(data = sirene_grenoble)+
+  xlab("Longitude") + ylab("Latitude")
+
+```
+:::
+
+-   Carte interactive avec tmap (tm_shape(), tm_polygons(), tm_dots())
+
+Tuto sur tmap: <https://r-tmap.github.io/tmap-book/layout.html>
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block8">
+
+Show/Hide
+
+</button>
+
+::: {#Block8 .collapse}
+```{r}
+tmap_mode("view")
+tm_shape(iris_grenoble) +tm_text(text = "iris_name",size=0.8)+
+  tm_polygons(col="Pop_15_64", alpha=0.5,
+              style="pretty", id="iris_name",
+              title="Population (15-64 ans)")+
+  tm_shape(sirene_grenoble) + 
+  tm_dots(col="enseigne1et",legend.show = TRUE,title="Enseigne",popup.vars="trancheeffe.2",size=0.1)+tm_layout(legend.outside = TRUE)
+```
+:::
+
+-   Carte interactive sans les noms des IRIS et autres couleurs
+
+Utilisez "tmaptools::palette_explorer()" pour trouver de bonnes palettes de couleurs
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block9">
+
+Show/Hide
+
+</button>
+
+::: {#Block9 .collapse}
+```{r}
+tmap_mode("view")
+tm_shape(iris_grenoble) +#m_text(text = "iris_name",size=0.8)+
+  tm_polygons("Pop_15_64", alpha=0.5, palette="PuBu",
+              style="pretty", id="iris_name",
+              title="Population (15-64 ans)")+
+  tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",popup.vars="trancheeffe.2",size=0.1)+tm_layout(legend.outside = TRUE)
+```
+:::
+
+-   Carte interactive avec plusieurs variables (plusieurs tm_shape() et tm_polygons())
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block10">
+
+Show/Hide
+
+</button>
+
+::: {#Block10 .collapse}
+```{r}
+iris_grenoble2<-iris_grenoble
+tmap_mode("view")
+tm_shape(iris_grenoble) +tm_text(text = "iris_name",size=0.8)+
+  tm_polygons("Pop_15_64", alpha=0.5,
+              style="pretty", id="iris_name",
+              title="Population (15-64 ans)")+
+  tm_shape(iris_grenoble2) +tm_text(text = "iris_name",size=0.8)+
+  tm_polygons("Nb_residence_principale", alpha=0.5,
+              style="pretty", id="iris_name",
+              title="Nb de residences principales")+
+  tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",popup.vars="trancheeffe.2",size=0.1)+tm_layout(legend.outside = TRUE)
+```
+:::
+
+-   La catégorisation des enseignes n'est pas parfaite. Remplissez à la main les enseignes manquantes grâce à google maps
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block11">
+
+Show/Hide
+
+</button>
+
+::: {#Block11 .collapse}
+```{r}
+View(sirene_grenoble[,c('numerovoiee','typevoieeta','libellevoie','codepostale','enseigne1et')]) 
+sirene_grenoble[8,'enseigne1et']<-"SPAR"
+sirene_grenoble[15,'enseigne1et']<-"SUPER U"
+sirene_grenoble<-sirene_grenoble[-20,] # 1 rue des clercs n'est pas un commerce alimentaire
+rownames(sirene_grenoble)<-NULL #Pour ne pas confondre rownames et numéro de la ligne
+View(sirene_grenoble[,c('numerovoiee','typevoieeta','libellevoie','codepostale','enseigne1et')]) 
+sirene_grenoble<-sirene_grenoble[-c(19,20),] #doublons avec la ligne 3 (enfin triplons)
+View(sirene_grenoble[,c('numerovoiee','typevoieeta','libellevoie','codepostale','enseigne1et')]) 
+rownames(sirene_grenoble)<-NULL #Pour ne pas confondre rownames et numÃ©ro de la ligne
+sirene_grenoble[21,'enseigne1et']<-"CASINO"
+sirene_grenoble[22,'enseigne1et']<-"CASINO"
+sirene_grenoble<-sirene_grenoble[-c(18),] #enlever le doublon 8 rue hoche
+View(sirene_grenoble[,c('numerovoiee','typevoieeta','libellevoie','codepostale','enseigne1et')]) #Vérification
+```
+:::
+
+-   Il y a une ligne (Intermarché) qui n'a pas de cordonnées, trouvez ses coordonées et ajoutez les dans la base de données (st_point())
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block12">
+
+Show/Hide
+
+</button>
+
+::: {#Block12 .collapse}
+```{r}
+sirene_grenoble[2,]$geometry[[1]]<-st_point(c(5.725362341538937,45.18110032013503), dim = "XYZ")
+```
+:::
+
+-   Fusionner les catégories d'une même chaine (dplyr%\>%mutate())
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block13">
+
+Show/Hide
+
+</button>
+
+::: {#Block13 .collapse}
+```{r}
+unique(st_drop_geometry(sirene_grenoble[,'enseigne1et'])) #pour obtenir la liste des enseignes
+sirene_grenoble<-sirene_grenoble%>%dplyr::mutate(enseigne1et=ifelse(enseigne1et%in%c("CARREFOUR EXPRESS","CARREFOUR CITY","CITY","CARREFOUR CONTACT"),"CARREFOUR",ifelse(enseigne1et%in%c("SUPER U","UTILE"),"SUPER U",enseigne1et)))
+unique(st_drop_geometry(sirene_grenoble[,'enseigne1et'])) #vérification
+```
+:::
+
+-   Carte finale
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block14">
+
+Show/Hide
+
+</button>
+
+::: {#Block14 .collapse}
+```{r}
+tmap_mode("view")
+tm_shape(iris_grenoble) +tm_text(text = "iris_name",size=0.8)+
+  tm_polygons("Pop_15_64", alpha=0.5,
+              style="pretty", id="iris_name",
+              title="Population (15-64 ans)")+
+   tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",size=0.1,id="enseigne1et",popup.vars="trancheeffe.2")+tm_layout(legend.outside = TRUE)
+```
+:::
+
+-   Sauvegarde des shapefiles et données
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block15">
+
+Show/Hide
+
+</button>
+
+::: {#Block15 .collapse}
+```{r, results='hide'}
+st_write(iris_grenoble,"C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/iris_grenoble.gpkg")
+
+st_write(sirene_grenoble,"C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/sirene_grenoble.gpkg")
+```
+
+:::
+
+# Pour la prochaine séance
+
+Selectionnez/créez 5 à 6 nouvelles variables pertinentes depuis la base de données globale 'iris_data' et les cartographier de manière intéractive pour la zone de votre groupe (Nord, Ouest ou Sud-Est). Celà nécessite donc de filter différemment le fond de carte IRIS et la base sirene et de vérifier que les enseignes soient bien renseignées, que tous les points de ventes aient bien des cordonnées géographiques, ... . Les cartes et la pertinence des variables sélectonnées seront évaluées.

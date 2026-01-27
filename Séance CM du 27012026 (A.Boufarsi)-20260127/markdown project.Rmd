@@ -1,0 +1,101 @@
+---
+title: "Titre : Geormarketing Report + nom des membres du groupe"
+output:
+   flexdashboard::flex_dashboard:
+    storyboard: true
+    social: menu
+    source_code: embed
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+knitr::opts_knit$set(root.dir = normalizePath("C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/"))
+
+```
+
+
+
+```{r, include=FALSE}
+setwd("C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/")
+```
+
+
+
+```{r, include=FALSE}
+setwd("C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/")
+install.packages("pacman",repos = "http://cran.us.r-project.org")
+pacman::p_load(dplyr, ggplot2, sf,readr,readxl,tmap,tmaptools,opentripplanner,)
+```
+
+```{r, include=FALSE}
+iris_shp<-st_read("georef-france-iris-millesime.shp",crs="WGS84")
+sirene_shp<-st_read("dataseed-sirene-2.shp",crs="WGS84")
+iris_data <- read_excel("iris_isere.xlsx")
+
+sirene_grenoble<-sirene_shp%>%filter(libellecomm=="GRENOBLE"&etatadminis=="Actif")
+iris_grenoble<-iris_shp%>%filter(com_name=="Grenoble")
+
+iris_data$nb_residence_princ<-iris_data$Res_princ_30_moins_40_m2+iris_data$Res_princ_40_moins_60_m2+iris_data$Res_princ_60_moins_80_m2+iris_data$Res_princ_80_moins_100_m2+iris_data$Res_princ_100_moins_120_m2
+```
+
+```{r, include=FALSE}
+colnames(iris_grenoble)[20]<-"CODE_IRIS"
+iris_grenoble<-merge(iris_grenoble,iris_data[,c("CODE_IRIS","1er_quartile_euro","3e_quartile_euro",'Actifs_15-64_ans2',"Pop_15-64_ans","Superficie","Delta_Pop_20-64_ans","nb_residence_princ")],by="CODE_IRIS")
+colnames(iris_grenoble)[c(31:34,36,37)]<-c("premier_quartile_revenu","troisieme_quartile_revenu","Actif_total","Pop_15_64","Delta_pop_20_64ans","Nb_residence_principale")
+iris_grenoble <-iris_grenoble %>%mutate_at(vars(premier_quartile_revenu, troisieme_quartile_revenu, Actif_total,Pop_15_64,Delta_pop_20_64ans,Nb_residence_principale),  ~ na_if(., 0))
+```
+
+
+Carte avec population active par IRIS
+===============
+
+Column {data-width=600}
+--------
+### Carte avec population active par IRIS
+```{r}
+ggplot(data = iris_grenoble) +
+  geom_sf(aes(fill = Actif_total)) +scale_fill_viridis_c(option="rocket",begin = 1,end=0)+
+  xlab("Longitude") + ylab("Latitude")
+```
+
+Column {data-width=400}
+-------------------------------------
+Vous pouvez interpréter la carte ici
+
+Carte avec localisation des supermarchés
+============
+Column {data-width=600}
+--------
+### Carte avec localisation des supermarchés
+```{r}
+ggplot(data = iris_grenoble) +
+  geom_sf() +  geom_sf(data = sirene_grenoble)+
+  xlab("Longitude") + ylab("Latitude")
+
+```
+
+Column {data-width=400}
+-------------------------------------
+Vous pouvez interpréter la carte ici
+
+
+
+Carte interactive avec tmap
+=========
+Column {data-width=600}
+--------
+### Carte interactive avec tmap
+```{r}
+tmap_mode("view")
+tm_shape(iris_grenoble) +tm_text(text = "iris_name",size=0.8)+
+  tm_polygons(col="Pop_15_64", alpha=0.5,
+              style="pretty", id="iris_name",
+              title="Population (15-64 ans)")+
+  tm_shape(sirene_grenoble) + 
+  tm_dots(col="enseigne1et",legend.show = TRUE,title="Enseigne",popup.vars="trancheeffe.2",size=0.1)+tm_layout(legend.outside = TRUE)
+```
+
+Column {data-width=400}
+-------------------------------------
+Vous pouvez interpréter la carte ici
+
