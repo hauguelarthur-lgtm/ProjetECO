@@ -8,20 +8,33 @@ output:
 ---
 
 ```{r}
-library("dplyr")
-library("ggplot2")
-library("sf")
-library("readr")
-library("readxl")
-library("tmap")
-library("tmaptools")
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(readr)
+library(readxl)
+library(tmap)
+library(tmaptools)
+library(here)
 
 
 
-iris_shp<-st_read("Cours/georef-france-iris-millesime.shp")
-sirene_shp<-st_read("Cours/dataseed-sirene-2.shp")
+# iris_shp<-st_read("Cours/georef-france-iris-millesime.shp")
 
-iris_data <- read_excel("Cours/iris_isere.xlsx")
+iris_shp <- st_read(
+  dsn   = here("Cours"),
+  layer = "georef-france-iris-millesime"
+)
+
+sirene_shp <- st_read(
+  dsn   = here("Cours"),
+  layer = "dataseed-sirene-2"
+)
+
+iris_data <- read_excel(
+  here("Cours", "iris_isere.xlsx")
+)
+
 ```
 
 ```{r}
