@@ -130,7 +130,7 @@ tm_shape(iris_grenoble) +#m_text(text = "iris_name",size=0.8)+
               style="pretty", id="iris_name",
               title="Population (15-64 ans)")+
   tm_shape(sirene_grenoble) + 
-  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",popup.vars="trancheeffe.2",size=0.1)+tm_layout(legend.outside = TRUE)
+  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",popup.vars="trancheeffe.2",size=0.5)+tm_layout(legend.outside = TRUE)
 ```
 
 ```{r}
@@ -143,7 +143,7 @@ tm_shape(iris_grenoble) +tm_text(text = "iris_name",size=0.8)+
               style="pretty", id="iris_name",
               title="Nb de residences principales")+
   tm_shape(sirene_grenoble) + 
-  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",popup.vars="trancheeffe.2",size=0.1)+tm_layout(legend.outside = TRUE)
+  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",popup.vars="trancheeffe.2",size=0.5)+tm_layout(legend.outside = TRUE)
 ```
 
 ```{r}
@@ -152,7 +152,7 @@ tm_shape(iris_grenoble) +#m_text(text = "iris_name",size=0.8)+
               style="pretty", id="iris_name",
               title="Population (15-64 ans)")+
   tm_shape(sirene_grenoble) + 
-  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",popup.vars="trancheeffe.2",size=0.1)+tm_layout(legend.outside = TRUE)
+  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",popup.vars="trancheeffe.2",size=0.5)+tm_layout(legend.outside = TRUE)
 ```
 ```{r}
 map_revenus <- tm_shape(iris_grenoble) +
@@ -160,7 +160,7 @@ map_revenus <- tm_shape(iris_grenoble) +
               style="quantile", id="iris_name",
               title="Revenu Médian (€)") +
   tm_shape(sirene_grenoble) + 
-  tm_dots("enseigne1et", legend.show = FALSE, size=0.05, popup.vars="enseigne1et") +
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.5, popup.vars="enseigne1et") +
   tm_layout(title = "Revenus")
 
 map_cadres <- tm_shape(iris_grenoble) +
@@ -168,7 +168,7 @@ map_cadres <- tm_shape(iris_grenoble) +
               style="quantile", id="iris_name",
               title="Nb Cadres & Prof. Sup.") +
   tm_shape(sirene_grenoble) + 
-  tm_dots("enseigne1et", legend.show = FALSE, size=0.05) +
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.5) +
   tm_layout(title = "CSP : Cadres")
 
 map_ouvriers <- tm_shape(iris_grenoble) +
@@ -176,7 +176,7 @@ map_ouvriers <- tm_shape(iris_grenoble) +
               style="quantile", id="iris_name",
               title="Nb Ouvriers") +
   tm_shape(sirene_grenoble) + 
-  tm_dots("enseigne1et", legend.show = FALSE, size=0.05) +
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.5) +
   tm_layout(title = "CSP : Ouvriers")
 
 map_familles <- tm_shape(iris_grenoble) +
@@ -184,7 +184,7 @@ map_familles <- tm_shape(iris_grenoble) +
               style="quantile", id="iris_name",
               title="Couples avec Enfant(s)") +
   tm_shape(sirene_grenoble) + 
-  tm_dots("enseigne1et", legend.show = FALSE, size=0.05) +
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.5) +
   tm_layout(title = "Familles")
 
 map_solo <- tm_shape(iris_grenoble) +
@@ -192,7 +192,7 @@ map_solo <- tm_shape(iris_grenoble) +
               style="quantile", id="iris_name",
               title="Ménages d'une personne") +
   tm_shape(sirene_grenoble) + 
-  tm_dots("enseigne1et", legend.show = FALSE, size=0.05) +
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.5) +
   tm_layout(title = "Personnes Seules")
 
 map_retraites <- tm_shape(iris_grenoble) +
@@ -200,7 +200,7 @@ map_retraites <- tm_shape(iris_grenoble) +
               style="quantile", id="iris_name",
               title="Nb Retraités") +
   tm_shape(sirene_grenoble) + 
-  tm_dots("enseigne1et", legend.show = FALSE, size=0.05) +
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.5) +
   tm_layout(title = "Retraités")
 
 map_voiture <- tm_shape(iris_grenoble) +
@@ -208,7 +208,7 @@ map_voiture <- tm_shape(iris_grenoble) +
               style="quantile", id="iris_name",
               title="Travail en Voiture (Nb)") +
   tm_shape(sirene_grenoble) + 
-  tm_dots("enseigne1et", legend.show = FALSE, size=0.05) +
+  tm_dots("enseigne1et", legend.show = FALSE, size=1) +
   tm_layout(title = "Mobilité Voiture")
 
 map_tc <- tm_shape(iris_grenoble) +
@@ -216,7 +216,7 @@ map_tc <- tm_shape(iris_grenoble) +
               style="quantile", id="iris_name",
               title="Travail en TC (Nb)") +
   tm_shape(sirene_grenoble) + 
-  tm_dots("enseigne1et", legend.show = FALSE, size=0.05) +
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.5) +
   tm_layout(title = "Mobilité TC")
 
 ```
