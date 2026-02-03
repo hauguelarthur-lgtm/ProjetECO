@@ -1,0 +1,297 @@
+---
+title: "Geomarketing avec R - Session 1 (Zone Nord)"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  html_notebook: default
+---
+
+```{r}
+library("dplyr")
+library("ggplot2")
+library("sf")
+library("readr")
+library("readxl")
+library("tmap")
+library("tmaptools")
+
+
+
+iris_shp<-st_read("Cours/georef-france-iris-millesime.shp")
+sirene_shp<-st_read("Cours/dataseed-sirene-2.shp")
+
+iris_data <- read_excel("Cours/iris_isere.xlsx")
+```
+
+```{r}
+sirene_coms <- c("GRENOBLE","MEYLAN","LA TRONCHE", "CORENC","SAINT-MARTIN-LE-VINOUX","SAINT-EGREVE")
+iris_coms <- c("Grenoble", "Meylan","La Tronche","Corenc","Saint-Martin-le-Vinoux","Saint-Égrève")
+sirene_grenoble <- sirene_shp %>% filter(libellecomm %in% sirene_coms & etatadminis=="Actif")
+iris_grenoble<-iris_shp%>%filter(com_name %in% iris_coms)
+```
+
+```{r}
+colnames(iris_grenoble)[20]<-"CODE_IRIS"
+iris_data$nb_residence_princ <- iris_data$Res_princ_30_moins_40_m2 + 
+                                iris_data$Res_princ_40_moins_60_m2 + 
+                                iris_data$Res_princ_60_moins_80_m2 + 
+                                iris_data$Res_princ_80_moins_100_m2 + 
+                                iris_data$Res_princ_100_moins_120_m2
+
+# 2. Fusion (Merge) avec toutes les variables souhaitées
+# On liste toutes les variables à récupérer
+vars_to_keep <- c("CODE_IRIS", 
+                  "1er_quartile_euro", "3e_quartile_euro", 
+                  "Actifs_15-64_ans2", "Pop_15-64_ans", 
+                  "Delta_Pop_20-64_ans", "nb_residence_princ",
+                  # Vos nouvelles variables :
+                  "Mediane_euro", "Menages_une_voiture", "Menages_1_personne", 
+                  "Men_fam_princ_Couple_enfant_s", "Pop_15_ansplus_Cadres_Prof_intel_sup", 
+                  "Pop_15_ansplus_Ouvriers", "Pop_15_ansplus_Retraites",
+                  "Actif_occ_15_ansplus_voiture_camion", "Actif_occ_15_ansplus_transport_commun")
+iris_data$nb_residence_princ <- iris_data$Res_princ_30_moins_40_m2 + 
+                                iris_data$Res_princ_40_moins_60_m2 + 
+                                iris_data$Res_princ_60_moins_80_m2 + 
+                                iris_data$Res_princ_80_moins_100_m2 + 
+                                iris_data$Res_princ_100_moins_120_m2
+
+iris_grenoble <- merge(iris_grenoble, iris_data[, vars_to_keep], by="CODE_IRIS", all.x = TRUE)
+
+iris_grenoble <- iris_grenoble %>% 
+  rename(
+    premier_quartile_revenu = `1er_quartile_euro`,
+    troisieme_quartile_revenu = `3e_quartile_euro`,
+    Actif_total = `Actifs_15-64_ans2`,
+    Pop_15_64 = `Pop_15-64_ans`,
+    Delta_pop_20_64ans = `Delta_Pop_20-64_ans`,
+    Nb_residence_principale = nb_residence_princ
+  )
+
+# 4. Remplacement des 0 par NA (Nettoyage)
+iris_grenoble <- iris_grenoble %>%
+  mutate_at(vars(
+    premier_quartile_revenu, troisieme_quartile_revenu, Actif_total, Pop_15_64, 
+    Delta_pop_20_64ans, Nb_residence_principale,
+    Mediane_euro, Menages_une_voiture, Menages_1_personne, Men_fam_princ_Couple_enfant_s,
+    Pop_15_ansplus_Cadres_Prof_intel_sup, Pop_15_ansplus_Ouvriers, Pop_15_ansplus_Retraites,
+    Actif_occ_15_ansplus_voiture_camion, Actif_occ_15_ansplus_transport_commun
+  ), ~ na_if(., 0))
+```
+
+```{r}
+ggplot(data = iris_grenoble) +
+  geom_sf(aes(fill = Actif_total)) +scale_fill_viridis_c(option="rocket",begin = 1,end=0)+
+  xlab("Longitude") + ylab("Latitude")
+```
+
+```{r}
+ggplot(data = iris_grenoble) +
+  geom_sf(aes(fill = Pop_15_64)) +scale_fill_viridis_c(option="rocket",begin = 1,end=0)+
+  xlab("Longitude") + ylab("Latitude")
+```
+
+```{r}
+ggplot(data = iris_grenoble) +
+  geom_sf(aes(fill = premier_quartile_revenu)) +scale_fill_viridis_c(option="rocket",begin = 1,end=0)+
+  xlab("Longitude") + ylab("Latitude")
+
+```
+
+```{r}
+ggplot(data = iris_grenoble) +
+  geom_sf(aes(fill = Nb_residence_principale)) +scale_fill_viridis_c(option="rocket",begin = 1,end=0)+
+  xlab("Longitude") + ylab("Latitude")
+```
+
+```{r}
+ggplot(data = iris_grenoble) +
+  geom_sf() +  geom_sf(data = sirene_grenoble)+
+  xlab("Longitude") + ylab("Latitude")
+
+```
+
+```{r}
+tmap_mode("view")
+```
+
+```{r}
+tm_shape(iris_grenoble) +tm_text(text = "iris_name",size=0.8)+
+  tm_polygons(col="Pop_15_64", alpha=0.5,
+              style="pretty", id="iris_name",
+              title="Population (15-64 ans)")+
+  tm_shape(sirene_grenoble) + 
+  tm_dots(col="enseigne1et",legend.show = TRUE,title="Enseigne",popup.vars="trancheeffe.2",size=0.1)+tm_layout(legend.outside = TRUE)
+```
+
+```{r}
+tm_shape(iris_grenoble) +#m_text(text = "iris_name",size=0.8)+
+  tm_polygons("Pop_15_64", alpha=0.5, palette="PuBu",
+              style="pretty", id="iris_name",
+              title="Population (15-64 ans)")+
+  tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",popup.vars="trancheeffe.2",size=0.1)+tm_layout(legend.outside = TRUE)
+```
+
+```{r}
+tm_shape(iris_grenoble) +tm_text(text = "iris_name",size=0.8)+
+  tm_polygons("Pop_15_64", alpha=0.5,
+              style="pretty", id="iris_name",
+              title="Population (15-64 ans)")+
+  tm_shape(iris_grenoble) +tm_text(text = "iris_name",size=0.8)+
+  tm_polygons("Nb_residence_principale", alpha=0.5,
+              style="pretty", id="iris_name",
+              title="Nb de residences principales")+
+  tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",popup.vars="trancheeffe.2",size=0.1)+tm_layout(legend.outside = TRUE)
+```
+
+```{r}
+tm_shape(iris_grenoble) +#m_text(text = "iris_name",size=0.8)+
+  tm_polygons("Pop_15_64", alpha=0.5, palette="PuBu",
+              style="pretty", id="iris_name",
+              title="Population (15-64 ans)")+
+  tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",popup.vars="trancheeffe.2",size=0.1)+tm_layout(legend.outside = TRUE)
+```
+```{r}
+map_revenus <- tm_shape(iris_grenoble) +
+  tm_polygons("Mediane_euro", alpha=0.5, palette="YlGnBu",
+              style="quantile", id="iris_name",
+              title="Revenu Médian (€)") +
+  tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.05, popup.vars="enseigne1et") +
+  tm_layout(title = "Revenus")
+
+map_cadres <- tm_shape(iris_grenoble) +
+  tm_polygons("Pop_15_ansplus_Cadres_Prof_intel_sup", alpha=0.5, palette="Blues",
+              style="quantile", id="iris_name",
+              title="Nb Cadres & Prof. Sup.") +
+  tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.05) +
+  tm_layout(title = "CSP : Cadres")
+
+map_ouvriers <- tm_shape(iris_grenoble) +
+  tm_polygons("Pop_15_ansplus_Ouvriers", alpha=0.5, palette="Oranges",
+              style="quantile", id="iris_name",
+              title="Nb Ouvriers") +
+  tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.05) +
+  tm_layout(title = "CSP : Ouvriers")
+
+map_familles <- tm_shape(iris_grenoble) +
+  tm_polygons("Men_fam_princ_Couple_enfant_s", alpha=0.5, palette="Purples",
+              style="quantile", id="iris_name",
+              title="Couples avec Enfant(s)") +
+  tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.05) +
+  tm_layout(title = "Familles")
+
+map_solo <- tm_shape(iris_grenoble) +
+  tm_polygons("Menages_1_personne", alpha=0.5, palette="Reds",
+              style="quantile", id="iris_name",
+              title="Ménages d'une personne") +
+  tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.05) +
+  tm_layout(title = "Personnes Seules")
+
+map_retraites <- tm_shape(iris_grenoble) +
+  tm_polygons("Pop_15_ansplus_Retraites", alpha=0.5, palette="RdPu",
+              style="quantile", id="iris_name",
+              title="Nb Retraités") +
+  tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.05) +
+  tm_layout(title = "Retraités")
+
+map_voiture <- tm_shape(iris_grenoble) +
+  tm_polygons("Actif_occ_15_ansplus_voiture_camion", alpha=0.5, palette="RdPu",
+              style="quantile", id="iris_name",
+              title="Travail en Voiture (Nb)") +
+  tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.05) +
+  tm_layout(title = "Mobilité Voiture")
+
+map_tc <- tm_shape(iris_grenoble) +
+  tm_polygons("Actif_occ_15_ansplus_transport_commun", alpha=0.5, palette="Greens",
+              style="quantile", id="iris_name",
+              title="Travail en TC (Nb)") +
+  tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.05) +
+  tm_layout(title = "Mobilité TC")
+
+```
+
+```{r}
+map_revenus
+map_cadres
+map_ouvriers
+map_familles
+map_solo
+map_retraites
+map_voiture
+map_tc
+```
+
+```{r}
+
+```
+
+```{r}
+# --- 1. Load the new Election/Demographic Data ---
+# Replace "elections_2024.gpkg" with the exact name of the file you downloaded
+eu_data_path <- file.path(data_dir, "data/iris-stats.gpkg") 
+
+# Read the file
+# Note: This might take a few seconds as it covers all of France
+eu_results <- st_read(eu_data_path)
+
+# --- 2. Inspect and Prepare for Join ---
+# Check column names to find the IRIS code and interesting variables
+# head(eu_results) 
+
+# Usually, IRIS codes in these files are named "code_iris", "IRIS", or "CODE_IRIS"
+# We standardize it to "CODE_IRIS" to match your existing dataset
+if("code_iris" %in% colnames(eu_results)) {
+  eu_results <- rename(eu_results, CODE_IRIS = code_iris)
+}
+
+# --- 3. Filter and Clean ---
+# We drop the geometry from the new file because we only want the data 
+# (we already have the map shapes in iris_grenoble)
+eu_data_clean <- st_drop_geometry(eu_results)
+
+# --- 4. Join with your Grenoble Map ---
+# We merge based on the common "CODE_IRIS" column
+iris_grenoble_eu <- merge(iris_grenoble, eu_data_clean, by="CODE_IRIS", all.x=TRUE)
+
+# --- 5. Visualize the New Data ---
+# Example: Mapping the turnout (Participation) or a specific party score
+# You might need to check 'colnames(iris_grenoble_eu)' to find the exact variable names
+# Common names in such files: "tx_participation", "Voix_RN", "Voix_LFI", etc.
+
+tmap_mode("view")
+
+# Example Map: Participation Rate (Check exact column name first!)
+# Replace 'taux_participation' with the actual column name from the new file
+tm_shape(iris_grenoble_eu) +
+  tm_polygons("taux_participation", # <--- CHANGE THIS to the real variable name
+              style = "pretty", 
+              palette = "Blues", 
+              alpha = 0.6, 
+              title = "Participation EU 2024") +
+  tm_shape(sirene_grenoble) +
+  tm_dots("enseigne1et", legend.show = FALSE, size=0.05)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+

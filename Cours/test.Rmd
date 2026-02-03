@@ -39,7 +39,7 @@ iris_data <- read_excel(
 
 ```{r}
 sirene_coms <- c("GRENOBLE","MEYLAN","LA TRONCHE", "CORENC","SAINT-MARTIN-LE-VINOUX","SAINT-EGREVE")
-iris_coms <- c("Grenoble", "Meylan","La Tronche","Corenc","Saint-Martin-le-Vinoux","Saint-�gr�ve")
+iris_coms <- c("Grenoble", "Meylan","La Tronche","Corenc","Saint-Martin-le-Vinoux","Saint-Égrève")
 sirene_grenoble <- sirene_shp %>% filter(libellecomm %in% sirene_coms & etatadminis=="Actif")
 iris_grenoble<-iris_shp%>%filter(com_name %in% iris_coms)
 ```
