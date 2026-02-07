@@ -1,0 +1,361 @@
+---
+title: "Geomarketing avec R - Session 2 (Grenoble + Zone Nord)"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  html_notebook: default
+---
+```{r,message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(readr)
+library(readxl)
+library(tmap)
+library(tmaptools)
+
+cours_dir <- "/Users/loic/Documents/UGA/donnee_entreprise/ProjetECO/Cours"
+if (
+  !file.exists(file.path(cours_dir, "dataseed-sirene-2.shp")) ||
+  !file.exists(file.path(cours_dir, "georef-france-iris-millesime.shp")) ||
+  !file.exists(file.path(cours_dir, "iris_isere.xlsx"))
+) {
+  stop("Fichiers introuvables dans Cours. Verifiez le chemin: ", cours_dir)
+}
+message("Dossier Cours utilise: ", cours_dir)
+
+otp_available <- requireNamespace("opentripplanner", quietly = TRUE)
+if (!otp_available) {
+  otp_pkg <- file.path(cours_dir, "opentripplanner_0.4.0.tar.gz")
+  if (file.exists(otp_pkg)) {
+    try(install.packages(otp_pkg, repos = NULL, type = "source"), silent = TRUE)
+    otp_available <- requireNamespace("opentripplanner", quietly = TRUE)
+  }
+}
+
+if (otp_available) {
+  library(opentripplanner)
+} else {
+  message("Package 'opentripplanner' absent: les sections OTP/isochrones seront ignorees.")
+}
+```
+```{r}
+# Chargement des données locales (mêmes sources que test.Rmd)
+iris_shp <- st_read(
+  dsn = cours_dir,
+  layer = "georef-france-iris-millesime"
+)
+
+sirene_shp <- st_read(
+  dsn = cours_dir,
+  layer = "dataseed-sirene-2"
+)
+
+iris_data <- read_excel(file.path(cours_dir, "iris_isere.xlsx"))
+
+# Zone d'étude: Grenoble + communes nord
+sirene_coms <- c(
+  "GRENOBLE", "MEYLAN", "LA TRONCHE",
+  "CORENC", "SAINT-MARTIN-LE-VINOUX", "SAINT-EGREVE"
+)
+iris_coms <- c(
+  "Grenoble", "Meylan", "La Tronche",
+  "Corenc", "Saint-Martin-le-Vinoux", "Saint-Égrève"
+)
+
+sirene_grenoble <- sirene_shp %>%
+  filter(libellecomm %in% sirene_coms & etatadminis == "Actif")
+iris_grenoble <- iris_shp %>%
+  filter(com_name %in% iris_coms)
+
+# OTP ne supporte pas les geometries vides dans fromPlace.
+empty_idx <- which(st_is_empty(sirene_grenoble))
+if (length(empty_idx) > 0) {
+  message("Points de vente retires (geometry vide): ", length(empty_idx))
+  sirene_grenoble <- sirene_grenoble[-empty_idx, ]
+}
+if (nrow(sirene_grenoble) == 0) {
+  stop("Aucun point de vente valide dans sirene_grenoble apres nettoyage des geometries.")
+}
+```
+```{r}
+# Préparation des variables IRIS (même logique que test.Rmd)
+colnames(iris_grenoble)[20] <- "CODE_IRIS"
+
+iris_data$nb_residence_princ <- iris_data$Res_princ_30_moins_40_m2 +
+  iris_data$Res_princ_40_moins_60_m2 +
+  iris_data$Res_princ_60_moins_80_m2 +
+  iris_data$Res_princ_80_moins_100_m2 +
+  iris_data$Res_princ_100_moins_120_m2
+
+vars_to_keep <- c(
+  "CODE_IRIS",
+  "1er_quartile_euro", "3e_quartile_euro",
+  "Actifs_15-64_ans2", "Pop_15-64_ans",
+  "Delta_Pop_20-64_ans", "nb_residence_princ"
+)
+```
+```{r}
+iris_grenoble <- merge(
+  iris_grenoble,
+  iris_data[, vars_to_keep],
+  by = "CODE_IRIS",
+  all.x = TRUE
+)
+```
+```{r}
+iris_grenoble <- iris_grenoble %>%
+  rename(
+    premier_quartile_revenu = `1er_quartile_euro`,
+    troisieme_quartile_revenu = `3e_quartile_euro`,
+    Actif_total = `Actifs_15-64_ans2`,
+    Pop_15_64 = `Pop_15-64_ans`,
+    Delta_pop_20_64ans = `Delta_Pop_20-64_ans`,
+    Nb_residence_principale = nb_residence_princ
+  )
+```
+```{r}
+iris_grenoble <- iris_grenoble %>%
+  mutate(
+    across(
+      c(
+        premier_quartile_revenu,
+        troisieme_quartile_revenu,
+        Actif_total,
+        Pop_15_64,
+        Delta_pop_20_64ans,
+        Nb_residence_principale
+      ),
+      ~ na_if(., 0)
+    )
+  )
+
+st_crs(sirene_grenoble)
+```
+```{r}
+# Buffer de 500 m autour des supermarchés
+sirene_grenoble_l93 <- st_transform(sirene_grenoble, 2154)
+buffer <- st_buffer(sirene_grenoble_l93, 500)
+buffer <- st_transform(buffer, st_crs(iris_grenoble))
+st_trbuffer <- buffer
+```
+```{r}
+if (!exists("iris_grenoble") || !exists("sirene_grenoble") || !exists("buffer")) {
+  stop("Executez d'abord les chunks de chargement/preparation des donnees.")
+}
+tmap_mode("view")
+tm_shape(iris_grenoble) +
+  tm_text(text = "iris_name", size = 0.8) +
+  tm_polygons(
+    "Pop_15_64",
+    alpha = 0.5,
+    style = "pretty",
+    id = "iris_name",
+    title = "Population (15-64 ans)"
+  ) +
+  tm_shape(buffer) +
+  tm_borders("chartreuse3", lwd = 3) +
+  tm_shape(sirene_grenoble) +
+  tm_dots(
+    "enseigne1et",
+    legend.show = TRUE,
+    title = "Enseigne",
+    id = "enseigne1et",
+    popup.vars = "trancheeffe.2",
+    alpha = 0.3
+  ) +
+  tm_layout(legend.outside = TRUE)
+```
+```{r}
+tm_shape(iris_grenoble) +
+  tm_text(text = "iris_name", size = 0.8) +
+  tm_polygons(
+    "Pop_15_64",
+    alpha = 0.5,
+    style = "pretty",
+    id = "iris_name",
+    title = "Population (15-64 ans)"
+  ) +
+  tm_shape(buffer) +
+  tm_polygons("enseigne1et", legend.show = FALSE, id = "enseigne1et", alpha = 0.5) +
+  tm_shape(sirene_grenoble) +
+  tm_dots(
+    "enseigne1et",
+    legend.show = TRUE,
+    title = "Enseigne",
+    id = "enseigne1et",
+    popup.vars = "trancheeffe.2",
+    alpha = 0.8
+  ) +
+  tm_layout(legend.outside = TRUE)
+```
+
+```{r,results='hide',message=FALSE, eval=otp_available}
+if (!exists("otpcon")) {
+  path_data <- file.path(cours_dir, "data")
+  graph_dir <- file.path(path_data, "graphs", "default")
+
+  if (!dir.exists(graph_dir)) {
+    dir.create(graph_dir, recursive = TRUE, showWarnings = FALSE)
+  }
+
+  graph_obj_src <- file.path(path_data, "Graph.obj")
+  graph_obj_dst <- file.path(graph_dir, "Graph.obj")
+  if (!file.exists(graph_obj_dst) && file.exists(graph_obj_src)) {
+    file.copy(graph_obj_src, graph_obj_dst)
+  }
+  if (!file.exists(graph_obj_dst)) {
+    stop("Graph.obj introuvable. Attendu dans ", graph_obj_src, " ou ", graph_obj_dst)
+  }
+
+  local_otp_jar <- file.path(cours_dir, "data", "otp-1.5.0-shaded.jar")
+  path_otp <- if (file.exists(local_otp_jar)) local_otp_jar else otp_dl_jar()
+
+  # Lance OTP uniquement si aucune connexion n'est deja active.
+  otpcon <- tryCatch(otp_connect(), error = function(e) NULL)
+  if (is.null(otpcon)) {
+    log1 <- otp_setup(otp = path_otp, dir = path_data)
+    otpcon <- otp_connect()
+  }
+}
+```
+
+```{r,results='hide', eval=otp_available}
+iso <- otp_isochrone(
+  otpcon,
+  fromPlace = sirene_grenoble,
+  fromID = sirene_grenoble$siret,
+  mode = c("WALK", "TRANSIT"),
+  maxWalkDistance = 1500,
+  date_time = as.POSIXct(strptime("2022-02-22 08:35", "%Y-%m-%d %H:%M")),
+  cutoffSec = c(5, 7, 9, 11) * 60
+)
+colnames(iso)[3] <- "siret"
+
+iso <- merge(
+  iso,
+  st_drop_geometry(sirene_grenoble[, c("siret", "enseigne1et")]),
+  by = "siret",
+  all.y = TRUE
+) %>%
+  unique()
+iso$minutes <- iso$time / 60
+```
+```{r,message=FALSE, eval=otp_available}
+tmap_mode("view")
+tm_shape(iris_grenoble) +
+  tm_polygons(
+    "Pop_15_64",
+    alpha = 0.5,
+    style = "pretty",
+    id = "iris_name",
+    title = "Population (15-64 ans)"
+  ) +
+  tm_shape(sirene_grenoble) +
+  tm_dots(
+    "enseigne1et",
+    legend.show = TRUE,
+    title = "Enseigne",
+    size = 0.1,
+    id = "enseigne1et",
+    popup.vars = "trancheeffe.2"
+  ) +
+  tm_layout(legend.outside = TRUE) +
+  tm_shape(iso) +
+  tm_fill(
+    "minutes",
+    breaks = c(0, 5.01, 7.01, 9.01, 11.01),
+    title = "Isochrones (minutes)",
+    style = "fixed",
+    labels = c("0 to 5", "5 to 7", "7 to 9", "9 to 11"),
+    palette = "-BuPu",
+    id = "minutes",
+    alpha = 0.3
+  ) +
+  tm_borders()
+```
+```{r, eval=otp_available}
+iso420 <- iso %>% filter(time == 420)
+
+iris_grenoble$nb_supermarche_per_iris <- rowSums(
+  ifelse(st_intersects(x = iris_grenoble, y = iso420, sparse = FALSE), 1, 0)
+)
+
+tm_shape(iris_grenoble) +
+  tm_polygons(
+    "nb_supermarche_per_iris",
+    style = "pretty",
+    id = "iris_name",
+    labels = c("0", "1", "2", "3", "4", "5"),
+    title = "Nb de Supermarchés accessible en 7min"
+  ) +
+  tm_text(text = "iris_name", size = 0.8)
+```
+```{r, eval=otp_available}
+data_temp <- matrix(0, nrow = nrow(iris_grenoble), ncol = nrow(iso420))
+for (j in 1:nrow(iso420)) {
+  for (i in 1:nrow(iris_grenoble)) {
+    data_temp[i, j] <- as.character(st_intersects(iris_grenoble, iso420, sparse = FALSE)[i, j])
+    data_temp[i, j] <- ifelse(data_temp[i, j] == "TRUE", iso420$enseigne1et[j], 0)
+  }
+}
+
+data_temp2 <- matrix(0, nrow = nrow(data_temp), ncol = length(unique(iso420$enseigne1et)))
+for (j in 1:length(unique(iso420$enseigne1et))) {
+  data_temp2[, j] <- apply(
+    data_temp,
+    1,
+    function(x) length(which(x == unique(iso420$enseigne1et)[j]))
+  )
+}
+
+data_temp2 <- as.data.frame(data_temp2)
+colnames(data_temp2) <- unique(iso420$enseigne1et)
+write.csv(data_temp2, file.path(cours_dir, "nb_pdv_iris.csv"), row.names = FALSE)
+```
+```{r, eval=otp_available}
+intersect_pct <- st_intersection(iris_grenoble, iso420) %>%
+  mutate(intersect_area = st_area(.)) %>%
+  dplyr::select(iris_name, intersect_area) %>%
+  group_by(iris_name) %>%
+  mutate(intersect_area = sum(intersect_area)) %>%
+  st_drop_geometry() %>%
+  unique()
+```
+```{r, eval=otp_available}
+iris_grenoble <- mutate(iris_grenoble, iris_area = st_area(iris_grenoble))
+
+iris_grenoble <- merge(iris_grenoble, intersect_pct, by = "iris_name", all.x = TRUE)
+
+iris_grenoble <- iris_grenoble %>%
+  mutate(intersect_area = ifelse(is.na(intersect_area), 0, intersect_area)) %>%
+  mutate(couverture = as.numeric(intersect_area / iris_area) * 100)
+
+tm_shape(iris_grenoble) +
+  tm_polygons(
+    col = "couverture",
+    alpha = 0.5,
+    style = "cont",
+    id = "iris_name",
+    title = "Couverture (%)"
+  ) +
+  tm_text(text = "iris_name", size = 0.8) +
+  tm_shape(sirene_grenoble) +
+  tm_dots(
+    "enseigne1et",
+    legend.show = TRUE,
+    title = "Enseigne",
+    size = 0.1,
+    id = "enseigne1et",
+    popup.vars = "trancheeffe.2"
+  ) +
+  tm_layout(legend.outside = TRUE)
+```
+```{r, eval=otp_available}
+st_write(
+  iris_grenoble,
+  file.path(cours_dir, "iris_grenoble2.gpkg"),
+  delete_dsn = TRUE
+)
+```
