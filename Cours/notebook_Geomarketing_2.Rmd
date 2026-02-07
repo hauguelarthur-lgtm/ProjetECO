@@ -1,0 +1,314 @@
+---
+title: "Geomarketing avec R - Session 2 - Boufarsi Adil"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  html_notebook: default
+---
+```{css, echo=FALSE}
+.spoiler {
+  visibility: hidden;
+}
+
+.spoiler::before {
+  visibility: visible;
+  content: "Answer"
+}
+
+.spoiler:hover {
+  visibility: visible;
+}
+
+.spoiler:hover::before {
+  display: none;
+}
+```
+
+```{r setup, echo=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/"))
+```
+Introduction 
+=====
+Pour cette deuxième séance, nous allons apprendre à utiliser un planifateur d'itinéraire sur R afin de calculer des isochrones autour de chaque supermarché et ainsi pouvoir identifier les zones de chalandises.
+
+1. Cartographier des isodistances
+======
+
+Une première information simple à obtenir mais très informative peut être obtenue en traçant des courbes d'isodistances autour de chaque supermarchés.
+On peut ainsi indentifier les zones non-deserviés.
+
++ Représentez les courbes d'isodistances (st_buffer(), tm_borders())
+```
+télécharger le package en .zip en cliquant sur ce lien
+https://cran.r-project.org/src/contrib/Archive/opentripplanner/opentripplanner_0.4.0.tar.gz
+
+Et installer Java 8 sur votre ordinateur:
+https://www.java.com/fr/download/
+```
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block0"> Show/Hide </button>  
+<div id="Block0" class="collapse"> 
+```{r,message=FALSE}
+setwd("C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/")
+pacman::p_load(dplyr, ggplot2, sf,readr,readxl,tmap,tmaptools)
+
+#installer le package opentripplaner (en modifiant le chemin d'acces)
+install.packages("C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/opentripplanner_0.4.0.tar.gz", repos = NULL, type = "source")
+library(opentripplanner)
+iris_grenoble<-st_read("iris_grenoble.gpkg")
+#vérifiez bien que vous avez la derniere version du fichier, avec 22 lignes (22 points de vente)
+sirene_grenoble<-st_read("sirene_grenoble.gpkg")
+
+st_crs(sirene_grenoble) #l'unité est le mètre
+buffer<-st_buffer(sirene_grenoble,500) #200m isodistance
+
+tmap_mode("view")
+tm_shape(iris_grenoble) +tm_text(text = "iris_name",size=0.8)+
+  tm_polygons("Pop_15_64", alpha=0.5,
+              style="pretty", id="iris_name",
+              title="Population (15-64 ans)")+
+     tm_shape(buffer)+tm_borders("chartreuse3",lwd=3)+
+  tm_shape(sirene_grenoble)+
+  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",id="enseigne1et",popup.vars="trancheeffe.2",alpha=0.3)+
+  tm_layout(legend.outside = TRUE)
+```
+</div>
+
++ Avec des cercles pleins plutôt que des courbes
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block00"> Show/Hide </button>  
+<div id="Block00" class="collapse"> 
+
+```{r}
+tm_shape(iris_grenoble) +tm_text(text = "iris_name",size=0.8)+
+  tm_polygons("Pop_15_64", alpha=0.5,
+              style="pretty", id="iris_name",
+              title="Population (15-64 ans)")+
+     tm_shape(buffer)+tm_polygons("enseigne1et",legend.show = FALSE,id="enseigne1et",alpha=0.5)+
+   tm_shape(sirene_grenoble)+
+  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",id="enseigne1et",popup.vars="trancheeffe.2",alpha=0.8)+
+  tm_layout(legend.outside = TRUE)
+
+```
+</div>
+
+2. Obtenir des isochrones
+=====
+
+2.1 Mise en place du calculateur d'itinéraire
+------
+
++ Nous allons utiliser OpenTripPlanner, un logiciel codé en Java et utilisé notamment dans le calculateur d'itinéraire du TAG.
+Pour fonctionner, OTP a besoin de 3 choses:
+
+Un dossier & un sous-dossier specifiques à créer dans votre R working directory > OTP > graphs > default
+
+Des données sur le réseau de transport GTFS (General Transit Feed Specification) à déposer dans OTP > graphs > default
+
+Un fond de carte openstreetmap à déposer dans OTP > graphs > default
+
++ données GTFS
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block1"> Show/Hide </button>  
+<div id="Block1" class="collapse">  
+
+```{r}
+knitr::include_graphics("C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/gtfs.png")
+```
+</div>
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block2"> Show/Hide </button>  
+<div id="Block2" class="collapse">  
+
+```
+Vous pouvez par exemple trouver les données GTFS sur le site M mobilité du TAG: data.mobilites-m.fr
+Une fois téléchargé le fichier SEM-GTFS.zip renommez le en gtfs.zip et placez le dans OTP > graphs > default
+```
+</div>
+
+
++ fond de carte OSM
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block3"> Show/Hide </button>  
+<div id="Block3" class="collapse">  
+```
+Il y a aussi beaucoup de sources, par exemple :
+https://download.geofabrik.de/europe/france/rhone-alpes.html
+Placez le fichier dans OTP > graphs > default
+```
+</div>
+<br/>
+
++ Mise en place d'OTP
+```{r,results='hide',message=FALSE}
+path_data <- "C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/OTP" #tell him the OTP directory 
+path_otp <- otp_dl_jar() #java 
+
+#Vous n'avez besoin de lancer cette ligne qu'une fois
+#log <- otp_build_graph(otp = path_otp, # Build Graph
+ #                      dir = path_data,memory=15000)
+log1<-otp_setup(otp = path_otp, dir = path_data) # Start OTP
+otpcon <- otp_connect()
+
+```
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block33"> Show/Hide </button>  
+<div id="Block33" class="collapse">
+
+```{r}
+setwd("C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/")
+knitr::include_graphics("C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/OTP_capture.png")
+```
+</div>
+
+2.2 Estimer les isochrones (otp_isochrone())
+-------
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block4"> Show/Hide </button>  
+<div id="Block4" class="collapse">  
+
+```{r,results='hide'}
+iso<-otp_isochrone(otpcon,fromPlace = sirene_grenoble,fromID=sirene_grenoble$siret,mode = c("WALK","TRANSIT"),
+            maxWalkDistance = 2000,date_time=as.POSIXct(strptime("2022-02-22 08:35", "%Y-%m-%d %H:%M")),
+            cutoffSec = c(5, 7,9,11) * 60 ) # Cut offs in seconds
+iso$minutes = iso$time / 60
+
+#verification
+colnames(iso)[3]<-"siret"
+iso<-merge(iso,st_drop_geometry(sirene_grenoble[,c(3,43)]),by="siret",all.y=TRUE)%>%unique() #pour avoir les enseignes mais on a pas d'isochrone pour deux points de vente
+sirene_grenoble[16,]$geom[[1]]<-st_point(c(5.728253270386639,45.17659752397455), dim = "XYZ") #ce point ne marchait pas pour 7min
+
+#On recommence
+iso<-otp_isochrone(otpcon,fromPlace = sirene_grenoble,fromID=sirene_grenoble$siret,mode = c("WALK","TRANSIT"),
+                   maxWalkDistance = 1500,date_time=as.POSIXct(strptime("2022-02-22 08:35", "%Y-%m-%d %H:%M")),
+                   cutoffSec = c(5, 7,9,11) * 60 ) # Cut offs in seconds
+colnames(iso)[3]<-"siret"
+
+iso<-merge(iso,st_drop_geometry(sirene_grenoble[,c(3,43)]),by="siret",all.y=TRUE)%>%unique() #pour avoir les enseignes mais on a pas d'isochrone pour deux points de vente
+iso$minutes = iso$time / 60
+```
+</div>
+
+3. Cartes finales et indices
+======
+
+3.1 Carte intéractive avec isochrones
+------
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block5"> Show/Hide </button>  
+<div id="Block5" class="collapse">  
+
+```{r,message=FALSE}
+tmap_mode("view")
+tm_shape(iris_grenoble) +#tm_text(text = "iris_name",size=0.8)+
+  tm_polygons("Pop_15_64", alpha=0.5,
+              style="pretty", id="iris_name",
+              title="Population (15-64 ans)")+
+   tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",size=0.1,id="enseigne1et",popup.vars="trancheeffe.2")+
+  tm_layout(legend.outside = TRUE)+
+  tm_shape(iso) +  
+  tm_fill("minutes",
+          breaks = c(0, 5.01,  7.01,9.01,11.01), title="Isochrones (minutes)",
+          style = "fixed",labels =c("0 to 5", "5 to 7", "7 to 9","9 to 11"),
+          palette ="-BuPu",id="minutes",alpha = 0.3) +
+  tm_borders()
+```
+</div>
+
+3.2 Analyse de la concurrence 
+------
++ Calculez le nombre de supermarchés accessibles par IRIS (st_intersects())
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block6"> Show/Hide </button>  
+<div id="Block6" class="collapse">  
+
+```{r}
+iso420<-iso%>%filter(time==420) #on selectionne seulement l'isocrhone à 7min
+#on compte (rowsums) le nombre de supermarchés présent par IRIS(st_intersect)
+iris_grenoble$nb_supermarche_per_iris<-rowSums(ifelse(st_intersects(x=iris_grenoble,y=iso420,sparse=F),1,0)) 
+tm_shape(iris_grenoble)+tm_polygons("nb_supermarche_per_iris",
+              style="pretty", id="iris_name",labels =c("0", "1","2","3","4","5"),
+              title="Nb de Supermarchés accessible en 7min")+tm_text(text = "iris_name",size=0.8)
+```
+</div>
+
++ Bonus pour la 3ème session, on calcule le nombre de supermarchés de chaque enseigne accessibles par IRIS
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block666"> Show/Hide </button>  
+<div id="Block666" class="collapse">  
+
+```{r}
+data_temp<-matrix(0,nrow=nrow(iris_grenoble),ncol=nrow(iso420))
+for(j in 1:nrow(iso420)){
+  for (i in 1:nrow(iris_grenoble)) {
+    data_temp[i,j]<-as.character(st_intersects(iris_grenoble, iso420,sparse=F)[i,j])
+    data_temp[i,j]<-ifelse(data_temp[i,j]=="TRUE",iso420$enseigne1et[j],0)
+  }
+} #cela nous donne les supermarchés accessibles dans chaque IRIS
+
+data_temp2<-matrix(0,nrow=nrow(data_temp),ncol=length(unique(iso420$enseigne1et)))
+for(j in 1:length(unique(iso420$enseigne1et))){
+  data_temp2[,j]<-apply(data_temp, 1, function(x) length(which(x==unique(iso420$enseigne1et)[j])))
+} #regroupe le dataframe différente avec le nombre de supermarché de chaque enseigne par IRIS
+
+data_temp2<-as.data.frame(data_temp2)
+colnames(data_temp2)<-unique(iso420$enseigne1et)
+#pensez bien à changer le repertoire ici
+write.csv(data_temp2,"C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/nb_pdv_iris.csv")
+```
+</div>
+
++ Calculez la surface cumulée couverte par un supermarché pour chaque iris (st_intersection(), st_area())
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block7"> Show/Hide </button>  
+<div id="Block7" class="collapse"> 
+
+```{r}
+#Surface cumulée couverte par un supermarché par IRIS
+
+intersect_pct <- st_intersection(iris_grenoble, iso420) %>% #calcul de l'intersection entre les iris et les iso
+     mutate(intersect_area = st_area(.)) %>%   # création d'une variable de la surface en intersection
+    dplyr::select(iris_name, intersect_area) %>%   # garder que les colonnes utiles
+  group_by(iris_name)%>%mutate(intersect_area=sum(intersect_area))%>% #somme de la surface en intersection avec tous les supermarchés par iris
+   st_drop_geometry()%>%unique() #On a pas besoin des informations géographiques
+
+```
+</div>
+
++ Puis calculez la surface de chaque IRIS, le taux de couverture par iris et faîtes une carte
+
+<button class="btn btn-primary" data-toggle="collapse" data-target="#Block8"> Show/Hide </button>  
+<div id="Block8" class="collapse"> 
+
+```{r}
+#Surface total des IRIS
+iris_grenoble <- mutate(iris_grenoble, iris_area = st_area(iris_grenoble)) #obtenir la surface de chaque iris
+
+#Fusionner les deux 
+iris_grenoble <- merge(iris_grenoble, intersect_pct, by = "iris_name", all.x = TRUE) #merge, which introduce some NAs when intersect_area=0
+
+#Calcul du taux de couverture
+iris_grenoble <- iris_grenoble %>% mutate(intersect_area=ifelse(is.na(intersect_area),0,intersect_area))%>% 
+   mutate(couverture = as.numeric(intersect_area/iris_area)*100) #on obtient le taux de couverture
+
+#Et enfin une carte
+tm_shape(iris_grenoble)+tm_polygons(col="couverture", alpha=0.5,
+              style="cont", id="iris_name",
+              title="Couverture (%)")+tm_text(text = "iris_name",size=0.8)+
+   tm_shape(sirene_grenoble) + 
+  tm_dots("enseigne1et",legend.show = TRUE,title="Enseigne",size=0.1,id="enseigne1et",popup.vars="trancheeffe.2")+
+  tm_layout(legend.outside = TRUE)
+  
+```
+</div>
+
++ Enregistrer iris_grenoble pour la prochaine séance
+```{r}
+st_write(iris_grenoble,"C:/Users/boufarsi/Documents/thèse/Enseignement/Geomarketing/New/iris_grenoble2.gpkg")
+
+```
+Devoirs pour la prochaine séance
+========
+Préparez plusieurs cartes avec des isochrones différentes et d'autres variables au niveau des IRIS (carte 3.1) afin de proposer une localisation potentielle d'un nouveau supermarché à Grenoble. Proposez aussi une autre carte (3.2) construite à partir d'une isochrone différente (>7min). Ce travail sera évalué.
