@@ -24,6 +24,7 @@ if (
   stop("Fichiers introuvables dans Cours. Verifiez le chemin: ", cours_dir)
 }
 message("Dossier Cours utilise: ", cours_dir)
+use_otp <- TRUE
 
 otp_available <- requireNamespace("opentripplanner", quietly = TRUE)
 if (!otp_available) {
@@ -191,7 +192,7 @@ tm_shape(iris_grenoble) +
   tm_layout(legend.outside = TRUE)
 ```
 
-```{r,results='hide',message=FALSE, eval=otp_available}
+```{r,results='hide',message=FALSE, eval=use_otp && otp_available}
 if (!exists("otpcon")) {
   path_data <- file.path(cours_dir, "data")
   graph_dir <- file.path(path_data, "graphs", "default")
@@ -221,7 +222,7 @@ if (!exists("otpcon")) {
 }
 ```
 
-```{r,results='hide', eval=otp_available}
+```{r,results='hide', eval=use_otp && otp_available}
 iso <- otp_isochrone(
   otpcon,
   fromPlace = sirene_grenoble,
@@ -233,16 +234,17 @@ iso <- otp_isochrone(
 )
 colnames(iso)[3] <- "siret"
 
-iso <- merge(
-  iso,
-  st_drop_geometry(sirene_grenoble[, c("siret", "enseigne1et")]),
-  by = "siret",
-  all.y = TRUE
-) %>%
-  unique()
+ref_enseigne <- sirene_grenoble %>%
+  st_drop_geometry() %>%
+  dplyr::select(siret, enseigne1et) %>%
+  dplyr::distinct()
+
+iso <- iso %>%
+  dplyr::left_join(ref_enseigne, by = "siret") %>%
+  dplyr::distinct()
 iso$minutes <- iso$time / 60
 ```
-```{r,message=FALSE, eval=otp_available}
+```{r,message=FALSE, eval=use_otp && otp_available}
 tmap_mode("view")
 tm_shape(iris_grenoble) +
   tm_polygons(
@@ -275,7 +277,7 @@ tm_shape(iris_grenoble) +
   ) +
   tm_borders()
 ```
-```{r, eval=otp_available}
+```{r, eval=use_otp && otp_available}
 iso420 <- iso %>% filter(time == 420)
 
 iris_grenoble$nb_supermarche_per_iris <- rowSums(
@@ -292,7 +294,7 @@ tm_shape(iris_grenoble) +
   ) +
   tm_text(text = "iris_name", size = 0.8)
 ```
-```{r, eval=otp_available}
+```{r, eval=use_otp && otp_available}
 data_temp <- matrix(0, nrow = nrow(iris_grenoble), ncol = nrow(iso420))
 for (j in 1:nrow(iso420)) {
   for (i in 1:nrow(iris_grenoble)) {
@@ -314,7 +316,7 @@ data_temp2 <- as.data.frame(data_temp2)
 colnames(data_temp2) <- unique(iso420$enseigne1et)
 write.csv(data_temp2, file.path(cours_dir, "nb_pdv_iris.csv"), row.names = FALSE)
 ```
-```{r, eval=otp_available}
+```{r, eval=use_otp && otp_available}
 intersect_pct <- st_intersection(iris_grenoble, iso420) %>%
   mutate(intersect_area = st_area(.)) %>%
   dplyr::select(iris_name, intersect_area) %>%
@@ -323,7 +325,7 @@ intersect_pct <- st_intersection(iris_grenoble, iso420) %>%
   st_drop_geometry() %>%
   unique()
 ```
-```{r, eval=otp_available}
+```{r, eval=use_otp && otp_available}
 iris_grenoble <- mutate(iris_grenoble, iris_area = st_area(iris_grenoble))
 
 iris_grenoble <- merge(iris_grenoble, intersect_pct, by = "iris_name", all.x = TRUE)
@@ -334,25 +336,24 @@ iris_grenoble <- iris_grenoble %>%
 
 tm_shape(iris_grenoble) +
   tm_polygons(
-    col = "couverture",
-    alpha = 0.5,
-    style = "cont",
+    fill = "couverture",
+    fill_alpha = 0.5,
+    fill.scale = tm_scale_continuous(),
     id = "iris_name",
-    title = "Couverture (%)"
+    fill.legend = tm_legend(title = "Couverture (%)")
   ) +
   tm_text(text = "iris_name", size = 0.8) +
   tm_shape(sirene_grenoble) +
   tm_dots(
-    "enseigne1et",
-    legend.show = TRUE,
-    title = "Enseigne",
+    fill = "enseigne1et",
+    fill.legend = tm_legend(title = "Enseigne"),
     size = 0.1,
     id = "enseigne1et",
     popup.vars = "trancheeffe.2"
   ) +
   tm_layout(legend.outside = TRUE)
 ```
-```{r, eval=otp_available}
+```{r, eval=use_otp && otp_available}
 st_write(
   iris_grenoble,
   file.path(cours_dir, "iris_grenoble2.gpkg"),
