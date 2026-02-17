@@ -1,4 +1,4 @@
-ARBORESCENCE DU REPO (ProjetECO)
+ARBORESCENCE DU REPO (ProjetECO) - MISE A JOUR
 
 .
 ├── .gitignore
@@ -7,22 +7,30 @@ ARBORESCENCE DU REPO (ProjetECO)
     ├── README.md
     ├── data
     │   ├── raw
-    │   │   ├── dataseed-sirene-2.dbf
-    │   │   ├── dataseed-sirene-2.prj
-    │   │   ├── dataseed-sirene-2.shp
-    │   │   ├── dataseed-sirene-2.shx
-    │   │   ├── georef-france-iris-millesime.dbf
-    │   │   ├── georef-france-iris-millesime.prj
-    │   │   ├── georef-france-iris-millesime.shp
-    │   │   ├── georef-france-iris-millesime.shx
-    │   │   ├── insee-plein-metadata.xls
+    │   │   ├── dataseed-sirene-1.{shp,shx,dbf,prj,cpg}
+    │   │   ├── dataseed-sirene-2.{shp,shx,dbf,prj}
+    │   │   ├── georef-france-iris-millesime.{shp,shx,dbf,prj}
     │   │   ├── iris_isere.xlsx
+    │   │   ├── insee-plein-metadata.xls
     │   │   └── opentripplanner_0.4.0.tar.gz
     │   ├── processed
     │   │   ├── iris_grenoble2.gpkg
     │   │   ├── iris_grenoble_iso10.gpkg
+    │   │   ├── iris_grenoble_iso10_2026.gpkg
     │   │   ├── nb_pdv_iris.csv
-    │   │   └── nb_pdv_iris_iso10.csv
+    │   │   ├── nb_pdv_iris_iso10.csv
+    │   │   ├── nb_pdv_iris_iso10_2026.csv
+    │   │   ├── sirene_compare_global_2025_vs_old.csv
+    │   │   ├── sirene_compare_zone_2025_vs_old.csv
+    │   │   ├── sirene_compare_siret_2025_vs_old.csv
+    │   │   ├── candidate_locations_scored.gpkg
+    │   │   ├── candidate_locations_top.gpkg
+    │   │   ├── candidate_locations_top.csv
+    │   │   ├── candidate_locations_scored_v2.gpkg
+    │   │   ├── candidate_locations_top_v2.gpkg
+    │   │   ├── candidate_locations_top_v2.csv
+    │   │   ├── candidate_locations_summary_v2.csv
+    │   │   └── candidate_locations_top_readable_v2.csv
     │   ├── graphs
     │   │   └── default
     │   │       └── Graph.obj
@@ -45,12 +53,19 @@ ARBORESCENCE DU REPO (ProjetECO)
     │   ├── rhone-alpes-latest.osm.pbf
     │   ├── sirene_grenoble.gpkg
     │   └── StockUniteLegale_utf8.parquet
+    ├── html
+    │   ├── analyse_implantation_v2.html
+    │   ├── seance2_iso10_features.html
+    │   ├── seance2_iso10_features_2026.html
+    │   └── t.html
     ├── notebooks
+    │   ├── analyse_implantation_v2.Rmd
     │   ├── markdown project.Rmd
     │   ├── notebook_Geomarketing_1.Rmd
     │   ├── notebook_Geomarketing_2.Rmd
     │   ├── seance2.Rmd
     │   ├── seance2_iso10_features.Rmd
+    │   ├── seance2_iso10_features_2026.Rmd
     │   ├── t.Rmd
     │   └── test.Rmd
     ├── reports
@@ -60,20 +75,27 @@ ARBORESCENCE DU REPO (ProjetECO)
     │   ├── seance2.html
     │   └── test.nb.html
     └── scripts
+        ├── compare_sirene_2025_vs_avant.R
+        ├── optimize_new_supermarket_location.R
+        ├── optimize_new_supermarket_location_v2.R
         └── script carte groupes report.R
 
 
 GUIDE RAPIDE POUR LES AUTRES MEMBRES
 
 1) Dossiers importants
-- Cours/data/raw/ : mettez ici les fichiers sources (shapefiles + excel).
-- Cours/data/processed/ : sorties generees par les notebooks/scripts.
-- Cours/data/ : fichiers OTP et gros fichiers locaux (graph, GTFS, OSM, jar).
+- Cours/data/raw/ : fichiers sources (SIRENE, IRIS, Excel INSEE).
+- Cours/data/processed/ : sorties generees par les scripts et notebooks.
+- Cours/data/ : fichiers lourds OTP/transport (Graph, GTFS, OSM, jar).
+- Cours/notebooks/ : analyses Rmd.
+- Cours/scripts/ : scripts de preparation, comparaison et optimisation.
 
-2) Fichiers minimaux requis pour executer les notebooks principaux
-- Cours/data/raw/dataseed-sirene-2.{shp,shx,dbf,prj}
+2) Fichiers minimaux requis pour lancer les notebooks principaux
 - Cours/data/raw/georef-france-iris-millesime.{shp,shx,dbf,prj}
 - Cours/data/raw/iris_isere.xlsx
+- Cours/data/raw/dataseed-sirene-2.{shp,shx,dbf,prj}
+  ou
+- Cours/data/raw/dataseed-sirene-1.{shp,shx,dbf,prj,cpg}
 
 3) Pour les notebooks OTP/isochrones (en plus)
 - Cours/data/otp-1.5.0-shaded.jar
@@ -82,5 +104,5 @@ GUIDE RAPIDE POUR LES AUTRES MEMBRES
 - Cours/data/rhone-alpes-latest.osm.pbf
 
 4) Git
-- Le repo est configure pour ignorer Cours/data/* sauf Cours/data/processed/**.
-- Chacun garde ses gros fichiers de data en local sans les pousser sur GitHub.
+- Le repo ignore Cours/data/* sauf Cours/data/processed/** (voir .gitignore).
+- Les gros fichiers de data restent en local (pas de push GitHub).

@@ -1,0 +1,380 @@
+---
+title: "Analyse implantation supermarche - v2"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(dplyr)
+library(sf)
+library(readr)
+library(ggplot2)
+library(scales)
+
+has_tmap <- requireNamespace("tmap", quietly = TRUE)
+if (has_tmap) {
+  library(tmap)
+}
+```
+
+## 1) Chargement des sorties v2
+
+```{r paths-and-load}
+cours_dir_candidates <- c("Cours", ".", "..")
+cours_dir <- cours_dir_candidates[
+  dir.exists(file.path(cours_dir_candidates, "data", "processed"))
+][1]
+if (is.na(cours_dir)) {
+  stop("Dossier Cours/data/processed introuvable depuis: ", getwd())
+}
+
+raw_dir <- file.path(cours_dir, "data", "raw")
+processed_dir <- file.path(cours_dir, "data", "processed")
+
+f_scored <- file.path(processed_dir, "candidate_locations_scored_v2.gpkg")
+f_top_gpkg <- file.path(processed_dir, "candidate_locations_top_v2.gpkg")
+f_top_csv <- file.path(processed_dir, "candidate_locations_top_v2.csv")
+
+missing_files <- c(f_scored, f_top_gpkg, f_top_csv)[
+  !file.exists(c(f_scored, f_top_gpkg, f_top_csv))
+]
+if (length(missing_files) > 0) {
+  stop(
+    "Fichiers v2 manquants:\n - ",
+    paste(missing_files, collapse = "\n - "),
+    "\nExecute d'abord: Rscript Cours/scripts/optimize_new_supermarket_location_v2.R"
+  )
+}
+
+cand <- st_read(f_scored, quiet = TRUE)
+top <- st_read(f_top_gpkg, quiet = TRUE)
+top_tbl <- read_csv(f_top_csv, show_col_types = FALSE)
+```
+
+## 2) Controle qualite des colonnes
+
+```{r checks}
+required_cols <- c(
+  "score_final", "dist_min_m", "dist_min_hyper_m", "dist_min_super_m",
+  "n_hyper_1km", "n_super_1km", "competition_weighted", "valid_candidate"
+)
+missing_cols <- setdiff(required_cols, names(cand))
+if (length(missing_cols) > 0) {
+  stop("Colonnes manquantes dans candidate_locations_scored_v2.gpkg: ", paste(missing_cols, collapse = ", "))
+}
+
+tibble(
+  n_candidates = nrow(cand),
+  n_valid_candidates = sum(cand$valid_candidate, na.rm = TRUE),
+  n_top = nrow(top),
+  min_score = min(cand$score_final, na.rm = TRUE),
+  median_score = median(cand$score_final, na.rm = TRUE),
+  max_score = max(cand$score_final, na.rm = TRUE)
+)
+```
+
+## 3) Classement des meilleurs emplacements
+
+```{r top-table}
+top_tbl %>%
+  arrange(rank) %>%
+  mutate(
+    score_final = round(score_final, 4),
+    dist_min_m = round(dist_min_m, 0),
+    dist_min_hyper_m = round(dist_min_hyper_m, 0),
+    dist_min_super_m = round(dist_min_super_m, 0),
+    competition_weighted = round(competition_weighted, 3)
+  ) %>%
+  select(
+    rank, iris_name, CODE_IRIS, score_final,
+    dist_min_m, dist_min_hyper_m, dist_min_super_m,
+    n_hyper_1km, n_super_1km, competition_weighted
+  )
+```
+
+## 4) Indicateurs de synthese
+
+```{r global-summary}
+summary_tbl <- cand %>%
+  st_drop_geometry() %>%
+  summarise(
+    n = n(),
+    valid = sum(valid_candidate, na.rm = TRUE),
+    p_valid = valid / n,
+    score_min = min(score_final, na.rm = TRUE),
+    score_q1 = quantile(score_final, 0.25, na.rm = TRUE),
+    score_median = median(score_final, na.rm = TRUE),
+    score_q3 = quantile(score_final, 0.75, na.rm = TRUE),
+    score_max = max(score_final, na.rm = TRUE),
+    avg_competition = mean(competition_weighted, na.rm = TRUE),
+    median_dist_hyper = median(dist_min_hyper_m, na.rm = TRUE),
+    median_dist_super = median(dist_min_super_m, na.rm = TRUE),
+    share_with_hyper_1km = mean(n_hyper_1km > 0, na.rm = TRUE),
+    share_with_super_1km = mean(n_super_1km > 0, na.rm = TRUE)
+  )
+
+summary_tbl
+```
+
+```{r export-summary}
+write_csv(summary_tbl, file.path(processed_dir, "candidate_locations_summary_v2.csv"))
+write_csv(
+  top_tbl %>% arrange(rank),
+  file.path(processed_dir, "candidate_locations_top_readable_v2.csv")
+)
+```
+
+## 5) Graphiques d'aide a la decision
+
+```{r plot-score-distribution, fig.height=4.5}
+cand_df <- cand %>% st_drop_geometry()
+
+ggplot(cand_df, aes(x = score_final)) +
+  geom_histogram(bins = 20, fill = "#0072B2", color = "white", alpha = 0.85) +
+  geom_vline(
+    xintercept = median(cand_df$score_final, na.rm = TRUE),
+    linetype = "dashed",
+    color = "#D55E00",
+    linewidth = 0.7
+  ) +
+  labs(
+    title = "Distribution des scores finaux",
+    x = "Score final",
+    y = "Nombre de candidats"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+```{r plot-competition-vs-score, fig.height=4.5}
+ggplot(
+  cand_df,
+  aes(
+    x = competition_weighted,
+    y = score_final,
+    color = factor(n_hyper_1km > 0, levels = c(FALSE, TRUE))
+  )
+) +
+  geom_point(alpha = 0.7, size = 2) +
+  scale_color_manual(
+    values = c("FALSE" = "#009E73", "TRUE" = "#D55E00"),
+    labels = c("FALSE" = "Sans hyper a 1km", "TRUE" = "Avec hyper a 1km"),
+    name = "Concurrence hyper"
+  ) +
+  labs(
+    title = "Score final vs pression concurrentielle",
+    x = "Concurrence ponderee",
+    y = "Score final"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+## 6) Carte des emplacements
+
+```{r load-stores-context}
+normalize_sirene <- function(x) {
+  if (!"libellecomm" %in% names(x) && "Commune_de_" %in% names(x)) x <- rename(x, libellecomm = Commune_de_)
+  if (!"etatadminis" %in% names(x) && "Etat_admini" %in% names(x)) x <- rename(x, etatadminis = Etat_admini)
+  if (!"activitepri.1" %in% names(x) && "Activite_pr.1" %in% names(x)) x <- rename(x, activitepri.1 = Activite_pr.1)
+  if (!"activitepri.2" %in% names(x) && "Activite_pr.2" %in% names(x)) x <- rename(x, activitepri.2 = Activite_pr.2)
+  if (!"activitepri" %in% names(x) && "Activite_pr" %in% names(x)) x <- rename(x, activitepri = Activite_pr)
+  x
+}
+
+normalize_activity_code <- function(x) {
+  out <- toupper(trimws(as.character(x)))
+  gsub("[^A-Z0-9]", "", out)
+}
+
+extract_activity_code <- function(df) {
+  cols <- c("activitepri.1", "activitepri.2", "activitepri")
+  cols <- cols[cols %in% names(df)]
+  if (length(cols) == 0) return(rep(NA_character_, nrow(df)))
+
+  out <- rep(NA_character_, nrow(df))
+  for (col in cols) {
+    v <- as.character(df[[col]])
+    fill <- is.na(out) | out == ""
+    out[fill] <- v[fill]
+  }
+  out
+}
+
+classify_store_type <- function(code_norm) {
+  out <- rep(NA_character_, length(code_norm))
+  is_4711 <- grepl("^4711", code_norm)
+  out[is_4711] <- "other_4711"
+  out[grepl("^4711D", code_norm)] <- "super"
+  out[grepl("^4711F", code_norm)] <- "hyper"
+  out
+}
+
+sirene_path <- file.path(raw_dir, "dataseed-sirene-2.shp")
+if (!file.exists(sirene_path)) {
+  sirene_path <- file.path(raw_dir, "dataseed-sirene-1.shp")
+}
+
+iris_path <- file.path(raw_dir, "georef-france-iris-millesime.shp")
+study_coms <- c(
+  "Grenoble", "Meylan", "La Tronche",
+  "Corenc", "Saint-Martin-le-Vinoux", "Saint-Égrève"
+)
+
+iris_bg <- NULL
+if (file.exists(iris_path)) {
+  iris_bg <- st_read(iris_path, quiet = TRUE) %>%
+    filter(com_name %in% study_coms)
+
+  if (!"CODE_IRIS" %in% names(iris_bg)) {
+    if ("iris_code" %in% names(iris_bg)) {
+      iris_bg <- iris_bg %>% rename(CODE_IRIS = iris_code)
+    }
+  }
+
+  if ("CODE_IRIS" %in% names(iris_bg) && "CODE_IRIS" %in% names(cand)) {
+    cand_attr <- cand %>%
+      st_drop_geometry() %>%
+      mutate(CODE_IRIS = as.character(CODE_IRIS)) %>%
+      select(CODE_IRIS, score_final, valid_candidate)
+
+    iris_bg <- iris_bg %>%
+      mutate(CODE_IRIS = as.character(CODE_IRIS)) %>%
+      left_join(cand_attr, by = "CODE_IRIS")
+  }
+}
+
+sirene_context <- NULL
+if (file.exists(sirene_path)) {
+  sirene_context <- st_read(sirene_path, quiet = TRUE) %>%
+    normalize_sirene() %>%
+    mutate(
+      activity_code = extract_activity_code(.),
+      activity_code_norm = normalize_activity_code(activity_code),
+      store_type = classify_store_type(activity_code_norm),
+      libellecomm_u = toupper(trimws(as.character(libellecomm))),
+      etatadminis_u = toupper(trimws(as.character(etatadminis)))
+    ) %>%
+    filter(
+      libellecomm_u %in% c(
+        "GRENOBLE", "MEYLAN", "LA TRONCHE",
+        "CORENC", "SAINT-MARTIN-LE-VINOUX", "SAINT-EGREVE"
+      ),
+      etatadminis_u %in% c("ACTIF", "A"),
+      !is.na(store_type)
+    )
+}
+
+top_map <- top %>%
+  arrange(rank) %>%
+  slice_head(n = 10)
+```
+
+```{r map, fig.height=7}
+if (has_tmap) {
+  tmap_mode("plot")
+
+  if (!is.null(iris_bg) && "score_final" %in% names(iris_bg)) {
+    map_obj <- tm_shape(iris_bg) +
+      tm_polygons(
+        col = "score_final",
+        style = "quantile",
+        n = 7,
+        palette = "YlGnBu",
+        alpha = 0.7,
+        border.col = "grey60",
+        lwd = 0.4,
+        id = "iris_name",
+        title = "Score final (IRIS)"
+      )
+  } else {
+    map_obj <- tm_shape(cand) +
+      tm_dots(
+        col = "score_final",
+        size = 0.06,
+        palette = "YlGnBu",
+        style = "quantile",
+        n = 7,
+        alpha = 0.75,
+        title = "Score final"
+      )
+  }
+
+  map_obj <- map_obj +
+    tm_shape(top_map) +
+    tm_symbols(
+      shape = 21,
+      col = "red",
+      border.col = "black",
+      size = 0.22,
+      alpha = 0.95,
+      id = "iris_name",
+      title.col = "Top emplacements"
+    ) +
+    tm_text("rank", size = 0.7, col = "black", ymod = -0.5)
+
+  if (!is.null(sirene_context) && nrow(sirene_context) > 0) {
+    map_obj <- map_obj +
+      tm_shape(sirene_context) +
+      tm_dots(
+        col = "store_type",
+        size = 0.045,
+        alpha = 0.8,
+        palette = c(
+          "super" = "#F0A202",
+          "hyper" = "#D7263D",
+          "other_4711" = "#6C757D"
+        ),
+        title = "Magasins existants"
+      )
+  }
+
+  map_obj + tm_layout(
+    legend.outside = TRUE,
+    main.title = "Carte d'implantation: top emplacements sur fond IRIS",
+    main.title.size = 1
+  )
+} else {
+  g <- ggplot()
+
+  if (!is.null(iris_bg) && "score_final" %in% names(iris_bg)) {
+    g <- g +
+      geom_sf(data = iris_bg, aes(fill = score_final), color = "grey60", linewidth = 0.15, alpha = 0.8) +
+      scale_fill_viridis_c(option = "C", name = "Score final (IRIS)")
+  } else {
+    g <- g +
+      geom_sf(data = cand, aes(color = score_final), size = 1.1, alpha = 0.7) +
+      scale_color_viridis_c(option = "C", name = "Score final")
+  }
+
+  g <- g +
+    geom_sf(data = top_map, color = "red", fill = "red", size = 2.2, alpha = 0.9, shape = 21) +
+    geom_sf_text(data = top_map, aes(label = rank), size = 3, nudge_y = 120) +
+    labs(
+      title = "Carte d'implantation: top emplacements sur fond IRIS"
+    ) +
+    theme_minimal(base_size = 12)
+
+  if (!is.null(sirene_context) && nrow(sirene_context) > 0) {
+    g <- g +
+      geom_sf(data = sirene_context, aes(color = store_type), size = 1.1, alpha = 0.75) +
+      scale_color_manual(
+        values = c(
+          "super" = "#F0A202",
+          "hyper" = "#D7263D",
+          "other_4711" = "#6C757D"
+        ),
+        name = "Magasins existants"
+      )
+  }
+
+  g
+}
+```
+
+## 7) A lire dans les resultats
+
+- Prioriser les lignes avec `score_final` eleve.
+- Verifier `dist_min_hyper_m` et `n_hyper_1km` pour eviter la concurrence forte des hypermarches.
+- Verifier `competition_weighted`: plus faible = zone moins contrainte concurrentiellement.

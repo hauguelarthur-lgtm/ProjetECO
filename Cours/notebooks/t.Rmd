@@ -247,49 +247,57 @@ map_tc
 
 ```{r}
 # --- 1. Load the new Election/Demographic Data ---
-# Replace "elections_2024.gpkg" with the exact name of the file you downloaded
-eu_data_path <- file.path(raw_dir, "iris-stats.gpkg")
+# Replace "iris-stats.gpkg" with the exact name of the file you downloaded.
+eu_data_path_candidates <- c(
+  file.path(raw_dir, "iris-stats.gpkg"),
+  file.path(cours_dir, "data", "iris-stats.gpkg"),
+  file.path(cours_dir, "data", "processed", "iris-stats.gpkg")
+)
+eu_data_path <- eu_data_path_candidates[file.exists(eu_data_path_candidates)][1]
 
-# Read the file
-# Note: This might take a few seconds as it covers all of France
-eu_results <- st_read(eu_data_path)
+if (is.na(eu_data_path)) {
+  message("Fichier 'iris-stats.gpkg' introuvable. Placez-le dans Cours/data/raw/ ou Cours/data/.")
+} else {
+  # Read the file (can take a few seconds if national coverage).
+  eu_results <- st_read(eu_data_path)
 
-# --- 2. Inspect and Prepare for Join ---
-# Check column names to find the IRIS code and interesting variables
-# head(eu_results) 
+  # Standardize IRIS code.
+  if ("code_iris" %in% colnames(eu_results)) {
+    eu_results <- rename(eu_results, CODE_IRIS = code_iris)
+  }
+  if (!"CODE_IRIS" %in% colnames(eu_results)) {
+    stop("La colonne CODE_IRIS (ou code_iris) est absente dans: ", eu_data_path)
+  }
 
-# Usually, IRIS codes in these files are named "code_iris", "IRIS", or "CODE_IRIS"
-# We standardize it to "CODE_IRIS" to match your existing dataset
-if("code_iris" %in% colnames(eu_results)) {
-  eu_results <- rename(eu_results, CODE_IRIS = code_iris)
+  # Join without geometry duplication.
+  eu_data_clean <- st_drop_geometry(eu_results)
+  iris_grenoble_eu <- merge(iris_grenoble, eu_data_clean, by = "CODE_IRIS", all.x = TRUE)
+
+  # Select preferred variable for mapping, with safe fallback.
+  value_col_candidates <- c("taux_participation", "tx_participation", "participation")
+  value_col <- value_col_candidates[value_col_candidates %in% colnames(iris_grenoble_eu)][1]
+  if (is.na(value_col)) {
+    numeric_cols <- colnames(iris_grenoble_eu)[sapply(iris_grenoble_eu, is.numeric)]
+    numeric_cols <- setdiff(numeric_cols, "CODE_IRIS")
+    if (length(numeric_cols) == 0) {
+      stop("Aucune variable numerique disponible pour la carte apres jointure.")
+    }
+    value_col <- numeric_cols[1]
+    message("Variable 'taux_participation' absente. Utilisation de: ", value_col)
+  }
+
+  tmap_mode("view")
+  tm_shape(iris_grenoble_eu) +
+    tm_polygons(
+      value_col,
+      style = "pretty",
+      palette = "Blues",
+      alpha = 0.6,
+      title = paste("Variable:", value_col)
+    ) +
+    tm_shape(sirene_grenoble) +
+    tm_dots("enseigne1et", legend.show = FALSE, size = 0.05)
 }
-
-# --- 3. Filter and Clean ---
-# We drop the geometry from the new file because we only want the data 
-# (we already have the map shapes in iris_grenoble)
-eu_data_clean <- st_drop_geometry(eu_results)
-
-# --- 4. Join with your Grenoble Map ---
-# We merge based on the common "CODE_IRIS" column
-iris_grenoble_eu <- merge(iris_grenoble, eu_data_clean, by="CODE_IRIS", all.x=TRUE)
-
-# --- 5. Visualize the New Data ---
-# Example: Mapping the turnout (Participation) or a specific party score
-# You might need to check 'colnames(iris_grenoble_eu)' to find the exact variable names
-# Common names in such files: "tx_participation", "Voix_RN", "Voix_LFI", etc.
-
-tmap_mode("view")
-
-# Example Map: Participation Rate (Check exact column name first!)
-# Replace 'taux_participation' with the actual column name from the new file
-tm_shape(iris_grenoble_eu) +
-  tm_polygons("taux_participation", # <--- CHANGE THIS to the real variable name
-              style = "pretty", 
-              palette = "Blues", 
-              alpha = 0.6, 
-              title = "Participation EU 2024") +
-  tm_shape(sirene_grenoble) +
-  tm_dots("enseigne1et", legend.show = FALSE, size=0.05)
 ```
 
 ```{r}
