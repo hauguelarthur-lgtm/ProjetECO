@@ -28,7 +28,7 @@ dir.create(processed_dir, recursive = TRUE, showWarnings = FALSE)
 message("Dossier Cours utilise: ", cours_dir)
 use_otp <- TRUE
 # Si TRUE, on stoppe le rendu quand aucun code 47.11* n'est trouve dans la zone.
-strict_supermarket_filter <- FALSE
+strict_supermarket_filter <- TRUE
 
 otp_available <- requireNamespace("opentripplanner", quietly = TRUE)
 if (!otp_available) {
@@ -59,9 +59,19 @@ iris_shp <- st_read(
   layer = "georef-france-iris-millesime"
 )
 
+sirene_layer <- "dataseed-sirene-1"
+sirene_dsn_candidates <- c(file.path(cours_dir, "data", "actif"), raw_dir)
+sirene_dsn <- sirene_dsn_candidates[
+  file.exists(file.path(sirene_dsn_candidates, paste0(sirene_layer, ".shp")))
+][1]
+if (is.na(sirene_dsn)) {
+  stop("Aucune source SIRENE trouvee pour ", sirene_layer, " dans data/actif ou data/raw.")
+}
+message("Source SIRENE utilisee: ", sirene_dsn, "/", sirene_layer, ".shp")
+
 sirene_shp <- st_read(
-  dsn = raw_dir,
-  layer = "dataseed-sirene-1"
+  dsn = sirene_dsn,
+  layer = sirene_layer
 )
 
 # Normalisation des noms de colonnes SIRENE 2026 vers le schema attendu.
@@ -89,6 +99,49 @@ if (!"activitepri.2" %in% colnames(sirene_shp) && "Activite_pr.2" %in% colnames(
 if (!"activitepri" %in% colnames(sirene_shp) && "Activite_pr" %in% colnames(sirene_shp)) {
   sirene_shp <- sirene_shp %>% rename(activitepri = Activite_pr)
 }
+
+clean_chr <- function(x) {
+  x <- trimws(as.character(x))
+  x[x %in% c("", "NA", "N/A", "NULL", "[ND]", "ND", "Missing", "MISSING", "SANS ENSEIGNE")] <- NA_character_
+  x
+}
+
+if (!"enseigne2et" %in% colnames(sirene_shp)) {
+  if ("Enseigne_de.1" %in% colnames(sirene_shp)) {
+    sirene_shp <- sirene_shp %>% rename(enseigne2et = Enseigne_de.1)
+  } else {
+    sirene_shp$enseigne2et <- NA_character_
+  }
+}
+if (!"enseigne3et" %in% colnames(sirene_shp)) {
+  if ("Enseigne_de.2" %in% colnames(sirene_shp)) {
+    sirene_shp <- sirene_shp %>% rename(enseigne3et = Enseigne_de.2)
+  } else {
+    sirene_shp$enseigne3et <- NA_character_
+  }
+}
+if (!"denominatio" %in% colnames(sirene_shp)) {
+  if ("Denominatio" %in% colnames(sirene_shp)) {
+    sirene_shp <- sirene_shp %>% rename(denominatio = Denominatio)
+  } else {
+    sirene_shp$denominatio <- NA_character_
+  }
+}
+
+sirene_shp$enseigne_display <- dplyr::coalesce(
+  clean_chr(sirene_shp$enseigne1et),
+  clean_chr(sirene_shp$enseigne2et),
+  clean_chr(sirene_shp$enseigne3et),
+  clean_chr(sirene_shp$denominatio),
+  as.character(sirene_shp$siret)
+)
+# On remplace la colonne utilisee dans les cartes pour eviter les points sans enseigne.
+sirene_shp$enseigne1et <- sirene_shp$enseigne_display
+sirene_shp$enseigne1et <- ifelse(
+  grepl("^[0-9]{14}$", as.character(sirene_shp$enseigne1et)),
+  "ENSEIGNE_INCONNUE",
+  as.character(sirene_shp$enseigne1et)
+)
 
 required_sirene_cols <- c("siret", "libellecomm", "etatadminis", "enseigne1et", "trancheeffe.2")
 missing_sirene_cols <- setdiff(required_sirene_cols, colnames(sirene_shp))
@@ -126,15 +179,23 @@ is_supermarket <- Reduce(
 )
 
 sirene_zone_active <- sirene_shp %>%
+  mutate(
+    libellecomm_u = toupper(trimws(as.character(libellecomm))),
+    etatadminis_u = toupper(trimws(as.character(etatadminis)))
+  ) %>%
   filter(
-    libellecomm %in% sirene_coms,
-    etatadminis == "Actif"
+    libellecomm_u %in% sirene_coms,
+    etatadminis_u %in% c("ACTIF", "A")
   )
 
 sirene_grenoble <- sirene_shp %>%
+  mutate(
+    libellecomm_u = toupper(trimws(as.character(libellecomm))),
+    etatadminis_u = toupper(trimws(as.character(etatadminis)))
+  ) %>%
   filter(
-    libellecomm %in% sirene_coms,
-    etatadminis == "Actif",
+    libellecomm_u %in% sirene_coms,
+    etatadminis_u %in% c("ACTIF", "A"),
     is_supermarket
   )
 iris_grenoble <- iris_shp %>%
@@ -147,10 +208,139 @@ if (length(empty_idx) > 0) {
   sirene_grenoble <- sirene_grenoble[-empty_idx, ]
 }
 if (nrow(sirene_grenoble) == 0) {
+  # Fallback intelligent: si la source 2026 ne contient aucun 47.11* dans la zone,
+  # on tente automatiquement dataseed-sirene-2 avant de stopper.
+  alt_layer <- "dataseed-sirene-2"
+  alt_dsn <- sirene_dsn_candidates[
+    file.exists(file.path(sirene_dsn_candidates, paste0(alt_layer, ".shp")))
+  ][1]
+
+  if (!is.na(alt_dsn)) {
+    message(
+      "Aucun 47.11* trouve dans ", sirene_layer,
+      ". Tentative automatique avec ", alt_layer, "."
+    )
+
+    alt_shp <- st_read(dsn = alt_dsn, layer = alt_layer)
+
+    if (!"siret" %in% colnames(alt_shp) && "SIRET" %in% colnames(alt_shp)) {
+      alt_shp <- alt_shp %>% rename(siret = SIRET)
+    }
+    if (!"libellecomm" %in% colnames(alt_shp) && "Commune_de_" %in% colnames(alt_shp)) {
+      alt_shp <- alt_shp %>% rename(libellecomm = Commune_de_)
+    }
+    if (!"etatadminis" %in% colnames(alt_shp) && "Etat_admini" %in% colnames(alt_shp)) {
+      alt_shp <- alt_shp %>% rename(etatadminis = Etat_admini)
+    }
+    if (!"enseigne1et" %in% colnames(alt_shp) && "Enseigne_de" %in% colnames(alt_shp)) {
+      alt_shp <- alt_shp %>% rename(enseigne1et = Enseigne_de)
+    }
+    if (!"trancheeffe.2" %in% colnames(alt_shp) && "Tranche_de_.2" %in% colnames(alt_shp)) {
+      alt_shp <- alt_shp %>% rename(trancheeffe.2 = Tranche_de_.2)
+    }
+    if (!"activitepri.1" %in% colnames(alt_shp) && "Activite_pr.1" %in% colnames(alt_shp)) {
+      alt_shp <- alt_shp %>% rename(activitepri.1 = Activite_pr.1)
+    }
+    if (!"activitepri.2" %in% colnames(alt_shp) && "Activite_pr.2" %in% colnames(alt_shp)) {
+      alt_shp <- alt_shp %>% rename(activitepri.2 = Activite_pr.2)
+    }
+    if (!"activitepri" %in% colnames(alt_shp) && "Activite_pr" %in% colnames(alt_shp)) {
+      alt_shp <- alt_shp %>% rename(activitepri = Activite_pr)
+    }
+    if (!"enseigne2et" %in% colnames(alt_shp)) {
+      if ("Enseigne_de.1" %in% colnames(alt_shp)) {
+        alt_shp <- alt_shp %>% rename(enseigne2et = Enseigne_de.1)
+      } else {
+        alt_shp$enseigne2et <- NA_character_
+      }
+    }
+    if (!"enseigne3et" %in% colnames(alt_shp)) {
+      if ("Enseigne_de.2" %in% colnames(alt_shp)) {
+        alt_shp <- alt_shp %>% rename(enseigne3et = Enseigne_de.2)
+      } else {
+        alt_shp$enseigne3et <- NA_character_
+      }
+    }
+    if (!"denominatio" %in% colnames(alt_shp)) {
+      if ("Denominatio" %in% colnames(alt_shp)) {
+        alt_shp <- alt_shp %>% rename(denominatio = Denominatio)
+      } else {
+        alt_shp$denominatio <- NA_character_
+      }
+    }
+
+    alt_shp$enseigne_display <- dplyr::coalesce(
+      clean_chr(alt_shp$enseigne1et),
+      clean_chr(alt_shp$enseigne2et),
+      clean_chr(alt_shp$enseigne3et),
+      clean_chr(alt_shp$denominatio),
+      as.character(alt_shp$siret)
+    )
+    alt_shp$enseigne1et <- alt_shp$enseigne_display
+    alt_shp$enseigne1et <- ifelse(
+      grepl("^[0-9]{14}$", as.character(alt_shp$enseigne1et)),
+      "ENSEIGNE_INCONNUE",
+      as.character(alt_shp$enseigne1et)
+    )
+
+    alt_activity_cols <- c("activitepri.1", "activitepri.2", "activitepri")
+    alt_activity_cols <- alt_activity_cols[alt_activity_cols %in% colnames(alt_shp)]
+
+    if (length(alt_activity_cols) > 0) {
+      alt_is_supermarket <- Reduce(
+        `|`,
+        lapply(
+          alt_activity_cols,
+          function(col) {
+            x <- as.character(alt_shp[[col]])
+            !is.na(x) & startsWith(x, "47.11")
+          }
+        )
+      )
+
+      alt_zone_active <- alt_shp %>%
+        mutate(
+          libellecomm_u = toupper(trimws(as.character(libellecomm))),
+          etatadminis_u = toupper(trimws(as.character(etatadminis)))
+        ) %>%
+        filter(
+          libellecomm_u %in% sirene_coms,
+          etatadminis_u %in% c("ACTIF", "A")
+        )
+
+      alt_grenoble <- alt_shp %>%
+        mutate(
+          libellecomm_u = toupper(trimws(as.character(libellecomm))),
+          etatadminis_u = toupper(trimws(as.character(etatadminis)))
+        ) %>%
+        filter(
+          libellecomm_u %in% sirene_coms,
+          etatadminis_u %in% c("ACTIF", "A"),
+          alt_is_supermarket
+        )
+
+      if (nrow(alt_grenoble) > 0) {
+        message(
+          "Bascule reussie: ", alt_layer, " (", nrow(alt_grenoble),
+          " supermarches/hypermarches 47.11* dans la zone)."
+        )
+        sirene_layer <- alt_layer
+        sirene_dsn <- alt_dsn
+        sirene_shp <- alt_shp
+        activity_cols <- alt_activity_cols
+        is_supermarket <- alt_is_supermarket
+        sirene_zone_active <- alt_zone_active
+        sirene_grenoble <- alt_grenoble
+      }
+    }
+  }
+}
+
+if (nrow(sirene_grenoble) == 0) {
   zone_active_total <- nrow(sirene_zone_active)
   if (strict_supermarket_filter) {
     stop(
-      "Aucun supermarche 47.11* trouve dans la zone. ",
+      "Aucun supermarche 47.11* trouve dans la zone (meme apres tentative fallback). ",
       "Etablissements actifs dans la zone (toutes activites): ",
       zone_active_total
     )

@@ -6,7 +6,7 @@ library(readr)
 # ----------------------------
 # Parameters
 # ----------------------------
-sirene_layer <- "dataseed-sirene-2" # change to dataseed-sirene-1 if needed
+sirene_layer <- "dataseed-sirene-1" # change to dataseed-sirene-1 if needed
 min_distance_to_existing_m <- 700
 min_distance_to_hyper_m <- 1000
 competition_radius_m <- 1000
@@ -39,15 +39,29 @@ if (penalty_hyper <= penalty_super) {
 # ----------------------------
 cours_dir_candidates <- c("Cours", ".", "..")
 cours_dir <- cours_dir_candidates[
-  file.exists(file.path(cours_dir_candidates, "data", "raw", paste0(sirene_layer, ".shp")))
+  dir.exists(file.path(cours_dir_candidates, "data"))
 ][1]
 if (is.na(cours_dir)) {
-  stop("Dossier Cours/data/raw introuvable depuis: ", getwd())
+  stop("Dossier Cours/data introuvable depuis: ", getwd())
 }
 
+data_dir <- file.path(cours_dir, "data")
 raw_dir <- file.path(cours_dir, "data", "raw")
+actif_dir <- file.path(cours_dir, "data", "actif")
 processed_dir <- file.path(cours_dir, "data", "processed")
 dir.create(processed_dir, recursive = TRUE, showWarnings = FALSE)
+
+sirene_dsn_candidates <- c(actif_dir, raw_dir, data_dir)
+sirene_dsn <- sirene_dsn_candidates[
+  file.exists(file.path(sirene_dsn_candidates, paste0(sirene_layer, ".shp")))
+][1]
+if (is.na(sirene_dsn)) {
+  stop(
+    "Fichier SIRENE introuvable pour ", sirene_layer, " dans:\n - ",
+    paste(sirene_dsn_candidates, collapse = "\n - ")
+  )
+}
+message("Source SIRENE utilisee: ", file.path(sirene_dsn, paste0(sirene_layer, ".shp")))
 
 # ----------------------------
 # Helpers
@@ -116,7 +130,7 @@ safe_count_within <- function(dist_m, selector, radius_m) {
 # Load data
 # ----------------------------
 iris_shp <- st_read(dsn = raw_dir, layer = "georef-france-iris-millesime", quiet = TRUE)
-sirene_shp <- st_read(dsn = raw_dir, layer = sirene_layer, quiet = TRUE) %>% normalize_sirene()
+sirene_shp <- st_read(dsn = sirene_dsn, layer = sirene_layer, quiet = TRUE) %>% normalize_sirene()
 iris_data <- read_excel(file.path(raw_dir, "iris_isere.xlsx"))
 
 # Study area

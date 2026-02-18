@@ -180,6 +180,11 @@ normalize_sirene <- function(x) {
   if (!"activitepri.1" %in% names(x) && "Activite_pr.1" %in% names(x)) x <- rename(x, activitepri.1 = Activite_pr.1)
   if (!"activitepri.2" %in% names(x) && "Activite_pr.2" %in% names(x)) x <- rename(x, activitepri.2 = Activite_pr.2)
   if (!"activitepri" %in% names(x) && "Activite_pr" %in% names(x)) x <- rename(x, activitepri = Activite_pr)
+  if (!"enseigne1et" %in% names(x) && "Enseigne_de" %in% names(x)) x <- rename(x, enseigne1et = Enseigne_de)
+  if (!"enseigne2et" %in% names(x) && "Enseigne_de.1" %in% names(x)) x <- rename(x, enseigne2et = Enseigne_de.1)
+  if (!"enseigne3et" %in% names(x) && "Enseigne_de.2" %in% names(x)) x <- rename(x, enseigne3et = Enseigne_de.2)
+  if (!"denominatio" %in% names(x) && "Denominatio" %in% names(x)) x <- rename(x, denominatio = Denominatio)
+  if (!"siret" %in% names(x) && "SIRET" %in% names(x)) x <- rename(x, siret = SIRET)
   x
 }
 
@@ -211,9 +216,24 @@ classify_store_type <- function(code_norm) {
   out
 }
 
-sirene_path <- file.path(raw_dir, "dataseed-sirene-2.shp")
-if (!file.exists(sirene_path)) {
-  sirene_path <- file.path(raw_dir, "dataseed-sirene-1.shp")
+clean_chr <- function(x) {
+  x <- trimws(as.character(x))
+  x[x %in% c("", "NA", "N/A", "NULL")] <- NA_character_
+  x
+}
+
+sirene_candidates <- c(
+  file.path(cours_dir, "data", "actif", "dataseed-sirene-2.shp"),
+  file.path(cours_dir, "data", "actif", "dataseed-sirene-1.shp"),
+  file.path(raw_dir, "dataseed-sirene-2.shp"),
+  file.path(raw_dir, "dataseed-sirene-1.shp")
+)
+sirene_path <- sirene_candidates[file.exists(sirene_candidates)][1]
+if (is.na(sirene_path)) {
+  sirene_path <- ""
+  message("Aucune source SIRENE contextuelle trouvee dans data/actif ou data/raw.")
+} else {
+  message("Source SIRENE contextuelle utilisee: ", sirene_path)
 }
 
 iris_path <- file.path(raw_dir, "georef-france-iris-millesime.shp")
@@ -248,13 +268,28 @@ if (file.exists(iris_path)) {
 sirene_context <- NULL
 if (file.exists(sirene_path)) {
   sirene_context <- st_read(sirene_path, quiet = TRUE) %>%
-    normalize_sirene() %>%
+    normalize_sirene()
+
+  for (col in c("enseigne1et", "enseigne2et", "enseigne3et", "denominatio", "siret")) {
+    if (!col %in% names(sirene_context)) {
+      sirene_context[[col]] <- NA_character_
+    }
+  }
+
+  sirene_context <- sirene_context %>%
     mutate(
       activity_code = extract_activity_code(.),
       activity_code_norm = normalize_activity_code(activity_code),
       store_type = classify_store_type(activity_code_norm),
       libellecomm_u = toupper(trimws(as.character(libellecomm))),
-      etatadminis_u = toupper(trimws(as.character(etatadminis)))
+      etatadminis_u = toupper(trimws(as.character(etatadminis))),
+      enseigne_display = dplyr::coalesce(
+        clean_chr(enseigne1et),
+        clean_chr(enseigne2et),
+        clean_chr(enseigne3et),
+        clean_chr(denominatio),
+        as.character(siret)
+      )
     ) %>%
     filter(
       libellecomm_u %in% c(
@@ -273,7 +308,7 @@ top_map <- top %>%
 
 ```{r map, fig.height=7}
 if (has_tmap) {
-  tmap_mode("plot")
+  tmap_mode("view")
 
   if (!is.null(iris_bg) && "score_final" %in% names(iris_bg)) {
     map_obj <- tm_shape(iris_bg) +
@@ -317,16 +352,21 @@ if (has_tmap) {
   if (!is.null(sirene_context) && nrow(sirene_context) > 0) {
     map_obj <- map_obj +
       tm_shape(sirene_context) +
-      tm_dots(
+      tm_symbols(
         col = "store_type",
-        size = 0.045,
-        alpha = 0.8,
+        shape = 21,
+        size = 0.16,
+        border.col = "black",
+        lwd = 0.4,
+        alpha = 0.9,
+        id = "enseigne_display",
+        popup.vars = c("enseigne_display", "store_type", "siret"),
         palette = c(
           "super" = "#F0A202",
           "hyper" = "#D7263D",
           "other_4711" = "#6C757D"
         ),
-        title = "Magasins existants"
+        title = "Magasins existants (cliquer pour enseigne)"
       )
   }
 
@@ -358,7 +398,7 @@ if (has_tmap) {
 
   if (!is.null(sirene_context) && nrow(sirene_context) > 0) {
     g <- g +
-      geom_sf(data = sirene_context, aes(color = store_type), size = 1.1, alpha = 0.75) +
+      geom_sf(data = sirene_context, aes(color = store_type), size = 2.6, alpha = 0.9) +
       scale_color_manual(
         values = c(
           "super" = "#F0A202",
@@ -366,7 +406,8 @@ if (has_tmap) {
           "other_4711" = "#6C757D"
         ),
         name = "Magasins existants"
-      )
+      ) +
+      guides(color = guide_legend(override.aes = list(size = 6, alpha = 1)))
   }
 
   g
