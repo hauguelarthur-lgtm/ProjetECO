@@ -1,0 +1,120 @@
+---
+title: "Rendu taches 1.1, 1.2, 1.3"
+output:
+  html_notebook: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Tache 1.1
+
+## Choix des isochrones + isodistances
+
+### Standard AdlC
+
+Isochrones (voiture):
+
+- Supermarche: 10 et 15 min (primaire / secondaire)
+- Hypermarche: 15 et 30 min (primaire / elargie)
+- Drives accoles: meme seuil que le magasin
+- Drives deportes: 10-15 min (logique de retrait)
+
+Isodistances (approx. de secours / complement):
+
+- Super: 3 km (≈10 min urbain), 5 km (≈15 min)
+- Hyper: 5 km (≈15 min), 10 km (≈30 min)
+
+> "Nous retenons des zones de chalandise en isochrones voiture. La litterature de concurrence et la pratique decisionnelle distinguent les formats: les supermarches ont une zone usuelle d'accessibilite d'environ 10-15 minutes, alors que les hypermarches s'analysent sur une zone plus large (15-30 minutes). Nous appliquons donc des seuils differencies selon le format. Pour la robustesse, nous completons par des isodistances (km) a titre d'approximation cartographique."
+
+> "Pour les formats de proximite (ex. city), la presse professionnelle indique des zones beaucoup plus courtes (≈ 8 minutes), ce qui justifie de traiter ces points a part ou de verifier leur impact reel sur l'analyse."
+
+### References bibliographiques
+
+1. COUR D'APPEL DE PARIS. Arret du 26 fevrier 2002 (reference Legifrance JURITEXT000006940750). En ligne: Legifrance.
+2. AUTORITE DE LA CONCURRENCE. Decision n° 24-DCC-255 du 28 novembre 2024 (mention des zones isochrones, definition et pratique). En ligne: Autorite de la concurrence.
+3. LINEAIRES. "Les premiers contours d'Auchan City". lineaires.com, 4 mars 2011.
+
+# Tache 1.2
+
+## Cartes socioeco/demo IRIS
+
+Objectif:
+
+- Produire au moins 5 cartes IRIS avec des variables utiles au CA potentiel (variables issues de `test.Rmd`).
+- Ajouter un commentaire specifique pour traiter les donnees avant 2025 et 2025.
+
+Exigences pour chaque carte:
+
+- Titre, legende, labels propres
+- Source citee bibliographiquement
+- Commentaire justifiant l'utilite pour le CA potentiel
+
+References a integrer:
+
+- Citations INSEE ou CREDOC sur la consommation alimentaire et ses determinants
+- Au moins 1 document expliquant le calcul du CA potentiel d'une zone de chalandise
+
+### TODO cartes IRIS (minimum 5)
+
+1. Carte IRIS variable 1 - utilite CA potentiel
+2. Carte IRIS variable 2 - utilite CA potentiel
+3. Carte IRIS variable 3 - utilite CA potentiel
+4. Carte IRIS variable 4 - utilite CA potentiel
+5. Carte IRIS variable 5 - utilite CA potentiel
+
+### TODO comparaison temporelle
+
+- Commentaire "avant 2025" (source + interpretation)
+- Commentaire "2025" (source + interpretation)
+- Commentaire comparatif final
+
+# Tache 1.3
+
+## Analyse concurrence (cartes + indicateurs + isochrones + indices)
+
+### Cartes super/hyper
+
+- Une carte pour 2020 (`data/raw/dataseed-sirene-2.shp`)
+- Une carte pour 2025 (`data/actif/dataseed-sirene-1.shp`)
+- Symboles differenciant:
+- Type: super vs hyper
+- Groupe / reseau (couleur, shape, etc.)
+
+### Carte drives 2025
+
+- Drives accoles + deportes
+- Enseigne visible
+
+### Zones de chalandise 2025 (isochrones)
+
+- Une carte avec les isochrones de chaque point de vente
+- Verification du recouvrement intra-enseigne (exclusivite territoriale)
+
+### Accessibilite / couverture par IRIS
+
+- Definir un seuil (minutes ou distance)
+- Calculer:
+- Nombre de points de vente accessibles par IRIS
+- Taux de couverture par IRIS
+- Produire 2 cartes (une par indicateur)
+- Comparer 2020 vs 2025 (cartes 2020/2025 hors dashboard, mais resultats verifiables)
+
+### Indices et concentration
+
+- Par enseigne et sur notre zone affectee (Grenoble + Nord):
+- Entropie
+- Moran
+- Un indicateur de concentration (ex: HHI sur parts d'etablissements, ou sur "capacite" si proxy disponible)
+- En 2020 et 2025
+- Enrichir avec infos nationales (parts de marche, etc.) + sources
+
+### TODO implementation
+
+1. Construire jeux 2020/2025 harmonises (super/hyper/drives)
+2. Calculer isochrones et indicateurs IRIS
+3. Calculer indices (entropie, Moran, HHI)
+4. Produire cartes finales pour dashboard
+5. Ajouter bibliographie complete et liens de sources
+
