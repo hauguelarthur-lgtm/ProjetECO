@@ -5,7 +5,21 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+
+library(dplyr)
+library(sf)
+library(stringr)
+library(readr)
+library(readxl)
+library(tmap)
+library(ggplot2)
 ```
 
 # Tache 1.1
@@ -32,9 +46,633 @@ Isodistances (approx. de secours / complement):
 
 ### References bibliographiques
 
-1. COUR D'APPEL DE PARIS. Arret du 26 fevrier 2002 (reference Legifrance JURITEXT000006940750). En ligne: Legifrance.
-2. AUTORITE DE LA CONCURRENCE. Decision n° 24-DCC-255 du 28 novembre 2024 (mention des zones isochrones, definition et pratique). En ligne: Autorite de la concurrence.
-3. LINEAIRES. "Les premiers contours d'Auchan City". lineaires.com, 4 mars 2011.
+1. COUR D'APPEL DE PARIS. Arret du 26 fevrier 2002 (reference Legifrance JURITEXT000006940750). En ligne: Legifrance - https://www.legifrance.gouv.fr/juri/id/JURITEXT000006940750.
+2. AUTORITE DE LA CONCURRENCE. Decision n° 24-DCC-255 du 28 novembre 2024 (mention des zones isochrones, definition et pratique). En ligne: Autorite de la concurrence - https://app.livv.eu/decisions/LawLex202400001461JBJ.
+3. LINEAIRES. "Les premiers contours d'Auchan City". lineaires.com, 4 mars 2011 - https://www.autoritedelaconcurrence.fr/sites/default/files/integral_texts/2025-01/24-037%20-%20Publique%20-De%CC%81cision%2024DCC255%20vf%20%2B%20Engagements.pdf
+# Donnees et fonctions communes
+
+```{r common-data}
+find_first_existing <- function(paths) {
+  hit <- paths[file.exists(paths)]
+  if (length(hit) == 0) return(NA_character_)
+  hit[[1]]
+}
+
+pick_col <- function(names_vec, candidates) {
+  out <- candidates[candidates %in% names_vec]
+  if (length(out) == 0) return(NA_character_)
+  out[[1]]
+}
+
+normalize_commune <- function(x) {
+  z <- as.character(x)
+  z <- iconv(z, from = "", to = "ASCII//TRANSLIT")
+  z <- ifelse(is.na(z), as.character(x), z)
+  z <- str_to_upper(z)
+  z <- str_replace_all(z, "[^A-Z0-9]", "")
+  z
+}
+
+normalize_enseigne <- function(x) {
+  y <- as.character(x)
+  y <- str_squish(y)
+  y <- str_to_upper(y)
+  y[y %in% c("", "NA", "N/A", "NULL", "MISSING", "[ND]", "ND", "SANS ENSEIGNE")] <- NA_character_
+  y
+}
+
+norm_siret <- function(x) {
+  z <- str_replace_all(as.character(x), "[^0-9]", "")
+  z[nchar(z) != 14] <- NA_character_
+  z
+}
+
+first_non_na <- function(df, cols) {
+  if (length(cols) == 0) return(rep(NA_character_, nrow(df)))
+  out <- rep(NA_character_, nrow(df))
+  for (cc in cols) {
+    v <- as.character(df[[cc]])
+    fill <- is.na(out) | out == ""
+    out[fill] <- v[fill]
+  }
+  out
+}
+
+map_group <- function(txt_upper) {
+  mapping <- tibble::tribble(
+    ~pattern, ~group_name,
+    "CARREFOUR|SUPECO|PROMOCASH", "Groupe Carrefour",
+    "INTERMARCHE|NETTO", "Groupement Les Mousquetaires (ITM)",
+    "AUCHAN|SIMPLY", "Groupe Auchan",
+    "E\\.? ?LECLERC|LECLERC", "E.Leclerc",
+    "SUPER U|HYPER U|U EXPRESS|UTILE|MARCHE U", "Systeme U",
+    "CASINO|MONOPRIX|FRANPRIX|SPAR|VIVAL", "Groupe Casino",
+    "LIDL", "Lidl",
+    "ALDI", "Aldi",
+    "COCCINELLE|CODI", "Francap",
+    "BIOCOOP", "Biocoop",
+    "GRAND FRAIS", "Prosol (Grand Frais)"
+  )
+
+  out <- rep(NA_character_, length(txt_upper))
+  for (i in seq_len(nrow(mapping))) {
+    idx <- is.na(out) & str_detect(txt_upper, mapping$pattern[[i]])
+    out[idx] <- mapping$group_name[[i]]
+  }
+  out
+}
+
+prepare_sirene <- function(sirene_sf_raw, year_label, communes_zone_norm) {
+  nm <- names(sirene_sf_raw)
+
+  siret_col <- pick_col(nm, c("siret", "SIRET"))
+  siren_col <- pick_col(nm, c("siren", "SIREN"))
+  comm_col <- pick_col(nm, c("libellecomm", "Commune_de_", "com_name"))
+  state_col <- pick_col(nm, c("etatadminis", "Etat_admini"))
+
+  enseigne_cols <- intersect(nm, c("enseigne1et", "Enseigne_de", "Enseigne_de.1", "Enseigne_de.2"))
+  denom_cols <- intersect(nm, c("denominatio", "Denominatio", "Denominatio.1"))
+  naf_cols <- intersect(
+    nm,
+    c(
+      "activitepri.1", "activitepri_1", "Activite_pr.1",
+      "activitepri", "Activite_pr", "activiteprincipaleetablissement"
+    )
+  )
+  effectif_col <- pick_col(nm, c("trancheeffe.2", "trancheeffe_2", "Tranche_de_.2"))
+
+  out <- sirene_sf_raw
+  out$siret_norm <- if (!is.na(siret_col)) norm_siret(out[[siret_col]]) else NA_character_
+  out$siren_norm <- if (!is.na(siren_col)) as.character(out[[siren_col]]) else NA_character_
+  out$commune <- if (!is.na(comm_col)) as.character(out[[comm_col]]) else NA_character_
+  out$commune_norm <- normalize_commune(out$commune)
+
+  if (!is.na(state_col)) {
+    state_upper <- str_to_upper(str_squish(as.character(out[[state_col]])))
+    out <- out %>% filter(state_upper %in% c("ACTIF", "A"))
+  }
+
+  out <- out %>% filter(commune_norm %in% communes_zone_norm)
+
+  out$enseigne_raw <- normalize_enseigne(first_non_na(out, enseigne_cols))
+  out$denomination <- normalize_enseigne(first_non_na(out, denom_cols))
+  out$enseigne <- dplyr::coalesce(out$enseigne_raw, out$denomination, "ENSEIGNE_INCONNUE")
+
+  code_naf_raw <- first_non_na(out, naf_cols)
+  out$code_naf <- str_to_upper(str_replace_all(code_naf_raw, "[^A-Z0-9]", ""))
+
+  txt <- str_to_upper(paste(out$enseigne, out$denomination, sep = " | "))
+  is_hyper_kw <- str_detect(txt, "HYPERMARCHE|HYPER U|GEANT|CORA|AUCHAN HYPER|CARREFOUR HYPER")
+  is_super_kw <- str_detect(txt, "SUPERMARCHE|INTERMARCHE|LIDL|ALDI|CARREFOUR MARKET|CARREFOUR CITY|CARREFOUR EXPRESS|SUPER U|U EXPRESS|MONOPRIX|NETTO")
+
+  out$type_point_vente <- case_when(
+    str_detect(out$code_naf, "^4711F$") ~ "hyper",
+    str_detect(out$code_naf, "^4711") ~ "super",
+    is_hyper_kw ~ "hyper",
+    is_super_kw ~ "super",
+    TRUE ~ NA_character_
+  )
+
+  out <- out %>% filter(!is.na(type_point_vente))
+
+  out$groupe_reseau_nom <- map_group(txt)
+  out$groupe_reseau_nom[is.na(out$groupe_reseau_nom)] <- "Independant/Autre"
+  out$tranche_eff <- if (!is.na(effectif_col)) as.character(out[[effectif_col]]) else NA_character_
+  out$annee <- year_label
+
+  out
+}
+
+make_isodistance <- function(points_sf, d_super_primary = 3000, d_super_secondary = 5000,
+                             d_hyper_primary = 5000, d_hyper_secondary = 10000) {
+  pts <- st_transform(points_sf, 2154)
+  d_primary <- ifelse(pts$type_point_vente == "hyper", d_hyper_primary, d_super_primary)
+  d_secondary <- ifelse(pts$type_point_vente == "hyper", d_hyper_secondary, d_super_secondary)
+
+  primary <- do.call(
+    rbind,
+    lapply(seq_len(nrow(pts)), function(i) {
+      st_buffer(pts[i, ], dist = d_primary[i]) %>%
+        mutate(seuil = "primaire", distance_km = d_primary[i] / 1000)
+    })
+  )
+
+  secondary <- do.call(
+    rbind,
+    lapply(seq_len(nrow(pts)), function(i) {
+      st_buffer(pts[i, ], dist = d_secondary[i]) %>%
+        mutate(seuil = "secondaire", distance_km = d_secondary[i] / 1000)
+    })
+  )
+
+  list(
+    primary = st_transform(primary, st_crs(points_sf)),
+    secondary = st_transform(secondary, st_crs(points_sf))
+  )
+}
+
+make_proxy_iso_bundle <- function(points_sf) {
+  iso_proxy <- make_isodistance(points_sf)
+  iso_proxy$primary <- iso_proxy$primary %>%
+    mutate(cutoff_label = ifelse(type_point_vente == "hyper", "15 min", "10 min"))
+  iso_proxy$secondary <- iso_proxy$secondary %>%
+    mutate(cutoff_label = ifelse(type_point_vente == "hyper", "30 min", "15 min"))
+  iso_proxy$all <- dplyr::bind_rows(iso_proxy$primary, iso_proxy$secondary)
+  iso_proxy
+}
+
+setup_otp_connection <- function(
+    cours_dir,
+    connect_ports = c(8080, 8081, 8082, 8801, 8802, 8803),
+    start_port_candidates = c(8901:8910, 8801:8810, 8080:8090),
+    attempt_start = FALSE
+) {
+  if (!requireNamespace("opentripplanner", quietly = TRUE)) {
+    stop("Package 'opentripplanner' requis pour les isochrones OTP.")
+  }
+
+  path_data <- file.path(cours_dir, "data")
+  graph_dir <- file.path(path_data, "graphs", "default")
+  dir.create(graph_dir, recursive = TRUE, showWarnings = FALSE)
+
+  graph_obj_src <- file.path(path_data, "Graph.obj")
+  graph_obj_dst <- file.path(graph_dir, "Graph.obj")
+  if (!file.exists(graph_obj_dst) && file.exists(graph_obj_src)) {
+    file.copy(graph_obj_src, graph_obj_dst)
+  }
+  if (!file.exists(graph_obj_dst)) {
+    stop("Graph.obj introuvable. Attendu dans ", graph_obj_src, " ou ", graph_obj_dst)
+  }
+
+  local_otp_jar <- file.path(path_data, "otp-1.5.0-shaded.jar")
+  path_otp <- if (file.exists(local_otp_jar)) {
+    local_otp_jar
+  } else {
+    opentripplanner::otp_dl_jar()
+  }
+
+  # 0) Tentative de connexion OTP par defaut (port/config du package).
+  otpcon <- tryCatch(opentripplanner::otp_connect(), error = function(e) NULL)
+  if (!is.null(otpcon)) {
+    message("Connexion OTP reutilisee via configuration par defaut")
+    return(otpcon)
+  }
+
+  # 1) Reutiliser un serveur OTP deja actif si possible.
+  for (pp in unique(connect_ports)) {
+    otpcon <- tryCatch(
+      opentripplanner::otp_connect(hostname = "localhost", port = pp),
+      error = function(e) NULL
+    )
+    if (!is.null(otpcon)) {
+      message("Connexion OTP reutilisee sur le port ", pp)
+      return(otpcon)
+    }
+  }
+
+  if (!isTRUE(attempt_start)) {
+    stop(
+      "Aucune connexion OTP active detectee (ports testes: ",
+      paste(unique(connect_ports), collapse = ", "),
+      "). Lancez OTP manuellement ou activez attempt_start = TRUE."
+    )
+  }
+
+  # 2) Sinon, tenter un demarrage OTP sur une liste de ports.
+  started_port <- NA_integer_
+  start_candidates <- unique(start_port_candidates)
+  for (pp in start_candidates) {
+    otpcon <- tryCatch({
+      opentripplanner::otp_setup(otp = path_otp, dir = path_data, port = pp)
+      opentripplanner::otp_connect(hostname = "localhost", port = pp)
+    }, error = function(e) {
+      message("Echec OTP port ", pp, ": ", conditionMessage(e))
+      NULL
+    })
+
+    if (!is.null(otpcon)) {
+      started_port <- pp
+      message("OTP lance sur le port ", pp)
+      return(otpcon)
+    }
+  }
+
+  stop(
+    "Impossible de demarrer/joindre OTP. ",
+    "Ports testes (connexion): ", paste(unique(connect_ports), collapse = ", "),
+    " | Ports testes (demarrage): ", paste(start_candidates, collapse = ", ")
+  )
+}
+
+build_otp_isochrones <- function(otpcon, sirene_sf) {
+  if (nrow(sirene_sf) == 0) stop("Aucun point de vente pour calcul OTP.")
+
+  pts_raw <- st_transform(sirene_sf, 4326)
+  pts_raw <- st_zm(pts_raw, drop = TRUE, what = "ZM")
+
+  valid_geom <- !st_is_empty(pts_raw)
+  coord_ok <- rep(FALSE, nrow(pts_raw))
+  if (any(valid_geom)) {
+    coords <- st_coordinates(pts_raw[valid_geom, ])
+    if (nrow(coords) == sum(valid_geom)) {
+      coord_ok[which(valid_geom)] <- is.finite(coords[, 1]) & is.finite(coords[, 2]) &
+        !is.na(coords[, 1]) & !is.na(coords[, 2])
+    } else {
+      # Cas rare: structure de coordonnees inattendue, on garde les geometries non vides.
+      coord_ok[which(valid_geom)] <- TRUE
+    }
+  }
+
+  keep <- valid_geom & coord_ok
+  dropped <- sum(!keep, na.rm = TRUE)
+  if (dropped > 0) {
+    message("OTP: ", dropped, " point(s) retire(s) (geometrie vide ou coordonnees manquantes).")
+  }
+
+  pts <- pts_raw[keep, ]
+  if (nrow(pts) == 0) {
+    stop("Aucun point avec coordonnees valides pour OTP apres nettoyage.")
+  }
+
+  pts <- pts %>% mutate(otp_id = as.character(row_number()))
+
+  call_iso_chunk <- function(pts_chunk, max_attempts = 3) {
+    last_err <- NULL
+    for (attempt in seq_len(max_attempts)) {
+      res <- tryCatch(
+        opentripplanner::otp_isochrone(
+          otpcon,
+          fromPlace = pts_chunk,
+          fromID = pts_chunk$otp_id,
+          mode = c("CAR"),
+          date_time = as.POSIXct("2025-02-19 08:30:00", tz = "Europe/Paris"),
+          cutoffSec = c(10, 15, 30) * 60,
+          ncores = 1
+        ),
+        error = function(e) e
+      )
+
+      if (!inherits(res, "error")) return(res)
+      last_err <- res
+      message(
+        "OTP erreur lot (tentative ", attempt, "/", max_attempts, "): ",
+        conditionMessage(res)
+      )
+      Sys.sleep(min(5, attempt * 1.5))
+    }
+    attr(last_err, "is_error") <- TRUE
+    last_err
+  }
+
+  batch_size <- 6
+  batches <- split(seq_len(nrow(pts)), ceiling(seq_len(nrow(pts)) / batch_size))
+  iso_parts <- list()
+  failed_points <- character(0)
+
+  for (b in seq_along(batches)) {
+    idx <- batches[[b]]
+    pts_chunk <- pts[idx, ]
+    message("OTP lot ", b, "/", length(batches), " - ", nrow(pts_chunk), " point(s)")
+    res_chunk <- call_iso_chunk(pts_chunk, max_attempts = 3)
+
+    if (!inherits(res_chunk, "error")) {
+      iso_parts[[length(iso_parts) + 1]] <- res_chunk
+      next
+    }
+
+    message("OTP lot ", b, " echec, fallback point-par-point.")
+    for (i in seq_len(nrow(pts_chunk))) {
+      one_pt <- pts_chunk[i, ]
+      res_one <- call_iso_chunk(one_pt, max_attempts = 2)
+      if (!inherits(res_one, "error")) {
+        iso_parts[[length(iso_parts) + 1]] <- res_one
+      } else {
+        failed_points <- c(failed_points, as.character(one_pt$otp_id))
+        message("OTP point ignore (otp_id=", one_pt$otp_id, "): ", conditionMessage(res_one))
+      }
+    }
+  }
+
+  if (length(iso_parts) == 0) {
+    stop(
+      "OTP n'a retourne aucun isochrone apres retries/batch fallback. ",
+      "Verifier serveur OTP et timeout reseau."
+    )
+  }
+
+  iso_raw <- do.call(rbind, iso_parts)
+  if (length(failed_points) > 0) {
+    message("OTP points ignores apres echec: ", length(unique(failed_points)))
+  }
+
+  if (nrow(iso_raw) == 0) stop("OTP n'a retourne aucun isochrone.")
+
+  id_candidates <- c("otp_id", "from_id", "fromId", "id", "siret", "siret_norm")
+  id_col <- id_candidates[id_candidates %in% names(iso_raw)]
+  if (length(id_col) == 0) {
+    id_col <- names(iso_raw)[3]
+  } else {
+    id_col <- id_col[[1]]
+  }
+  names(iso_raw)[names(iso_raw) == id_col] <- "otp_id"
+  iso_raw$otp_id <- as.character(iso_raw$otp_id)
+
+  meta <- pts %>%
+    st_drop_geometry() %>%
+    select(otp_id, siret_norm, type_point_vente, enseigne, groupe_reseau_nom)
+  meta$otp_id <- as.character(meta$otp_id)
+
+  iso <- iso_raw %>%
+    left_join(meta, by = "otp_id")
+
+  iso$minutes <- iso$time / 60
+  iso <- iso %>%
+    filter(
+      (type_point_vente == "super" & time %in% c(600, 900)) |
+        (type_point_vente == "hyper" & time %in% c(900, 1800))
+    ) %>%
+    mutate(
+      seuil_iso = case_when(
+        (type_point_vente == "super" & time == 600) | (type_point_vente == "hyper" & time == 900) ~ "primaire",
+        TRUE ~ "secondaire"
+      ),
+      cutoff_label = paste0(round(minutes), " min")
+    )
+
+  st_transform(iso, st_crs(sirene_sf))
+}
+
+compute_access_indicators <- function(iris_sf, iso_primary_sf, code_col = "CODE_IRIS") {
+  iris_l93 <- st_transform(iris_sf, 2154)
+  iso_l93 <- st_transform(iso_primary_sf, 2154)
+
+  out <- iris_l93
+  out$nb_pdv_access <- lengths(st_intersects(out, iso_l93))
+  out$iris_area <- as.numeric(st_area(out))
+  out$intersect_area <- 0
+
+  if (nrow(iso_l93) > 0) {
+    iso_union <- st_union(iso_l93)
+    inter <- suppressWarnings(st_intersection(out[, code_col, drop = FALSE], st_sf(id = 1, geometry = iso_union)))
+    if (nrow(inter) > 0) {
+      inter_tbl <- inter %>%
+        mutate(intersect_area = as.numeric(st_area(.))) %>%
+        st_drop_geometry() %>%
+        group_by(.data[[code_col]]) %>%
+        summarise(intersect_area = sum(intersect_area), .groups = "drop")
+      out <- out %>% left_join(inter_tbl, by = code_col, suffix = c("", ".new")) %>%
+        mutate(intersect_area = dplyr::coalesce(intersect_area.new, intersect_area)) %>%
+        select(-intersect_area.new)
+    }
+  }
+
+  out$taux_couverture <- ifelse(out$iris_area > 0, 100 * out$intersect_area / out$iris_area, 0)
+  st_transform(out, st_crs(iris_sf))
+}
+
+tmap_mode("plot")
+
+cours_dir_candidates <- c("Cours", ".", "..")
+cours_dir <- cours_dir_candidates[
+  file.exists(file.path(cours_dir_candidates, "data", "raw", "georef-france-iris-millesime.shp"))
+][1]
+if (is.na(cours_dir)) stop("Dossier Cours/data/raw introuvable depuis: ", getwd())
+
+data_dir <- file.path(cours_dir, "data")
+raw_dir <- file.path(data_dir, "raw")
+actif_dir <- file.path(data_dir, "actif")
+processed_dir <- file.path(data_dir, "processed")
+
+communes_nord <- c(
+  "GRENOBLE", "MEYLAN", "LATRONCHE", "CORENC",
+  "SAINTMARTINLEVINOUX", "SAINTEGREVE"
+)
+communes_nord_only <- c("MEYLAN", "LATRONCHE", "CORENC", "SAINTMARTINLEVINOUX", "SAINTEGREVE")
+communes_ouest <- c("SASSENAGE", "FONTAINE", "SEYSSINETPARISET", "SEYSSINS")
+communes_sudest <- c("ECHIROLLES", "EYBENS", "SAINTMARTINDHERES", "GIERES")
+
+# Scope des cartes demande: Grenoble + Nord uniquement
+communes_map_scope <- communes_nord
+
+iris_path <- file.path(raw_dir, "georef-france-iris-millesime.shp")
+iris_shp <- st_read(iris_path, quiet = TRUE)
+iris_code_col <- pick_col(names(iris_shp), c("CODE_IRIS", "iris_code", "IRIS", "code_iris"))
+if (is.na(iris_code_col)) stop("Colonne CODE_IRIS introuvable dans le shapefile IRIS.")
+if (iris_code_col != "CODE_IRIS") iris_shp <- iris_shp %>% rename(CODE_IRIS = all_of(iris_code_col))
+
+iris_comm_col <- pick_col(names(iris_shp), c("com_name", "libellecomm", "Commune_de_"))
+if (is.na(iris_comm_col)) stop("Colonne commune introuvable dans le shapefile IRIS.")
+iris_shp$commune_norm <- normalize_commune(iris_shp[[iris_comm_col]])
+iris_zone <- iris_shp %>% filter(commune_norm %in% communes_map_scope)
+iris_zone$CODE_IRIS <- as.character(iris_zone$CODE_IRIS)
+
+iris_data <- read_excel(file.path(raw_dir, "iris_isere.xlsx"))
+iris_data$CODE_IRIS <- as.character(iris_data$CODE_IRIS)
+if (!"nb_residence_princ" %in% names(iris_data)) {
+  needed_res <- c(
+    "Res_princ_30_moins_40_m2", "Res_princ_40_moins_60_m2",
+    "Res_princ_60_moins_80_m2", "Res_princ_80_moins_100_m2",
+    "Res_princ_100_moins_120_m2"
+  )
+  if (all(needed_res %in% names(iris_data))) {
+    iris_data$nb_residence_princ <- rowSums(iris_data[, needed_res], na.rm = TRUE)
+  } else {
+    iris_data$nb_residence_princ <- NA_real_
+  }
+}
+
+vars_to_keep <- c(
+  "CODE_IRIS",
+  "1er_quartile_euro", "3e_quartile_euro",
+  "Actifs_15-64_ans2", "Pop_15-64_ans",
+  "Delta_Pop_20-64_ans", "nb_residence_princ",
+  "Mediane_euro", "Menages_une_voiture", "Menages_1_personne",
+  "Men_fam_princ_Couple_enfant_s", "Pop_15_ansplus_Cadres_Prof_intel_sup",
+  "Pop_15_ansplus_Ouvriers", "Pop_15_ansplus_Retraites",
+  "Actif_occ_15_ansplus_voiture_camion", "Actif_occ_15_ansplus_transport_commun"
+)
+for (vv in setdiff(vars_to_keep, names(iris_data))) iris_data[[vv]] <- NA_real_
+
+iris_zone <- iris_zone %>%
+  left_join(iris_data[, vars_to_keep], by = "CODE_IRIS") %>%
+  rename(
+    premier_quartile_revenu = `1er_quartile_euro`,
+    troisieme_quartile_revenu = `3e_quartile_euro`,
+    Actif_total = `Actifs_15-64_ans2`,
+    Pop_15_64 = `Pop_15-64_ans`,
+    Delta_pop_20_64ans = `Delta_Pop_20-64_ans`,
+    Nb_residence_principale = nb_residence_princ
+  )
+
+num_to_clean <- intersect(
+  names(iris_zone),
+  c(
+    "premier_quartile_revenu", "troisieme_quartile_revenu",
+    "Actif_total", "Pop_15_64", "Delta_pop_20_64ans", "Nb_residence_principale",
+    "Mediane_euro", "Menages_une_voiture", "Menages_1_personne",
+    "Men_fam_princ_Couple_enfant_s", "Pop_15_ansplus_Cadres_Prof_intel_sup",
+    "Pop_15_ansplus_Ouvriers", "Pop_15_ansplus_Retraites",
+    "Actif_occ_15_ansplus_voiture_camion", "Actif_occ_15_ansplus_transport_commun"
+  )
+)
+iris_zone <- iris_zone %>% mutate(across(all_of(num_to_clean), ~ na_if(., 0)))
+
+sirene_2025_path <- find_first_existing(c(
+  file.path(actif_dir, "dataseed-sirene-1.shp"),
+  file.path(raw_dir, "dataseed-sirene-1.shp"),
+  file.path(data_dir, "dataseed-sirene-1.shp")
+))
+sirene_2020_path <- find_first_existing(c(
+  file.path(raw_dir, "dataseed-sirene-2.shp"),
+  file.path(actif_dir, "dataseed-sirene-2.shp"),
+  file.path(data_dir, "dataseed-sirene-2.shp")
+))
+if (is.na(sirene_2025_path) || is.na(sirene_2020_path)) {
+  stop("Shapefiles SIRENE 2025/2020 introuvables.")
+}
+
+sirene_2025_raw <- st_read(dirname(sirene_2025_path), layer = tools::file_path_sans_ext(basename(sirene_2025_path)), quiet = TRUE)
+sirene_2020_raw <- st_read(dirname(sirene_2020_path), layer = tools::file_path_sans_ext(basename(sirene_2020_path)), quiet = TRUE)
+
+sirene_2025 <- prepare_sirene(sirene_2025_raw, "2025", communes_map_scope)
+sirene_2020 <- prepare_sirene(sirene_2020_raw, "2020", communes_map_scope)
+
+sirene_2025 <- st_transform(sirene_2025, st_crs(iris_zone))
+sirene_2020 <- st_transform(sirene_2020, st_crs(iris_zone))
+
+tab_ponctuels_path <- file.path(processed_dir, "GROUPEXX_TabPonctuels_rapport1.csv")
+drives_total_csv <- NA_integer_
+drives_scope_csv <- NA_integer_
+if (file.exists(tab_ponctuels_path)) {
+  tab_ponctuels <- read_csv(
+    tab_ponctuels_path,
+    col_types = cols(
+      siret = col_character(),
+      siren = col_character(),
+      .default = col_guess()
+    ),
+    show_col_types = FALSE
+  )
+  tab_ponctuels$siret_norm <- norm_siret(tab_ponctuels$siret)
+  drives_total_csv <- sum(tab_ponctuels$drive_accole | tab_ponctuels$drive_deporte, na.rm = TRUE)
+  drives_scope_csv <- tab_ponctuels %>%
+    mutate(commune_scope = ifelse(groupe_geomarketing %in% c("Grenoble", "Nord"), TRUE, FALSE)) %>%
+    summarise(n = sum(commune_scope & (drive_accole | drive_deporte), na.rm = TRUE)) %>%
+    pull(n)
+
+  drive_tbl <- tab_ponctuels %>%
+    transmute(
+      siret_norm,
+      drive_accole = as.logical(drive_accole),
+      drive_deporte = as.logical(drive_deporte),
+      source_drive = as.character(source_drive)
+    ) %>%
+    distinct(siret_norm, .keep_all = TRUE)
+
+  sirene_2025 <- sirene_2025 %>%
+    left_join(drive_tbl, by = "siret_norm")
+} else {
+  sirene_2025$drive_accole <- FALSE
+  sirene_2025$drive_deporte <- FALSE
+  sirene_2025$source_drive <- "none"
+}
+
+sirene_2025$drive_accole <- ifelse(is.na(sirene_2025$drive_accole), FALSE, sirene_2025$drive_accole)
+sirene_2025$drive_deporte <- ifelse(is.na(sirene_2025$drive_deporte), FALSE, sirene_2025$drive_deporte)
+sirene_2025$source_drive <- dplyr::coalesce(sirene_2025$source_drive, "none")
+drives_scope_map <- sum(sirene_2025$drive_accole | sirene_2025$drive_deporte, na.rm = TRUE)
+
+map_iris_var <- function(var_name, title_txt, palette_txt = "YlGnBu") {
+  if (!var_name %in% names(iris_zone)) stop("Variable absente de iris_zone: ", var_name)
+  tm_shape(iris_zone) +
+    tm_polygons(
+      col = var_name,
+      alpha = 0.7,
+      palette = palette_txt,
+      style = "quantile",
+      id = "iris_name",
+      title = title_txt
+    ) +
+    tm_shape(sirene_2025) +
+    tm_dots(
+      col = "type_point_vente",
+      palette = c(super = "#1f78b4", hyper = "#e31a1c"),
+      title = "Type point de vente",
+      size = 0.08,
+      alpha = 0.9
+    ) +
+    tm_layout(legend.outside = TRUE, main.title = title_txt)
+}
+
+plot_concurrence_map <- function(sirene_sf, title_txt) {
+  ggplot() +
+    geom_sf(data = iris_zone, fill = "grey97", color = "grey80", linewidth = 0.2) +
+    geom_sf(
+      data = sirene_sf,
+      aes(color = groupe_reseau_nom, shape = type_point_vente),
+      size = 2.2,
+      alpha = 0.95
+    ) +
+    scale_shape_manual(values = c(super = 16, hyper = 17), drop = FALSE, name = "Type") +
+    labs(
+      title = title_txt,
+      subtitle = "Zone d'analyse: Grenoble + Nord",
+      color = "Groupe / reseau"
+    ) +
+    theme_minimal()
+}
+
+message("Donnees chargees:")
+message(" - IRIS zone: ", nrow(iris_zone))
+message(" - SIRENE 2020 (super/hyper): ", nrow(sirene_2020))
+message(" - SIRENE 2025 (super/hyper): ", nrow(sirene_2025))
+message(" - Drives identifies 2025: ", sum(sirene_2025$drive_accole | sirene_2025$drive_deporte, na.rm = TRUE))
+if (!is.na(drives_total_csv)) {
+  message(" - Drives CSV total (agglo): ", drives_total_csv)
+  message(" - Drives CSV scope Grenoble+Nord: ", drives_scope_csv)
+  message(" - Drives affiches sur cartes (scope Grenoble+Nord): ", drives_scope_map)
+}
+```
 
 # Tache 1.2
 
@@ -56,65 +694,437 @@ References a integrer:
 - Citations INSEE ou CREDOC sur la consommation alimentaire et ses determinants
 - Au moins 1 document expliquant le calcul du CA potentiel d'une zone de chalandise
 
-### TODO cartes IRIS (minimum 5)
+### Carte 1 - Revenu median par IRIS
 
-1. Carte IRIS variable 1 - utilite CA potentiel
-2. Carte IRIS variable 2 - utilite CA potentiel
-3. Carte IRIS variable 3 - utilite CA potentiel
-4. Carte IRIS variable 4 - utilite CA potentiel
-5. Carte IRIS variable 5 - utilite CA potentiel
+```{r t12-map1}
+map_iris_var("Mediane_euro", "IRIS - Revenu median (euros)", "YlGnBu")
+```
 
-### TODO comparaison temporelle
+Commentaire (CA potentiel): le revenu median informe la capacite contributive des menages et permet de moduler les hypothese de panier moyen.
 
-- Commentaire "avant 2025" (source + interpretation)
-- Commentaire "2025" (source + interpretation)
-- Commentaire comparatif final
+### Carte 2 - Cadres et professions intellectuelles
+
+```{r t12-map2}
+map_iris_var(
+  "Pop_15_ansplus_Cadres_Prof_intel_sup",
+  "IRIS - Cadres et professions intellectuelles",
+  "Blues"
+)
+```
+
+Commentaire (CA potentiel): la structure socio-professionnelle influence les habitudes de consommation, les formats privilegies et la sensibilite prix.
+
+### Carte 3 - Ouvriers
+
+```{r t12-map3}
+map_iris_var(
+  "Pop_15_ansplus_Ouvriers",
+  "IRIS - Ouvriers (15 ans et +)",
+  "Oranges"
+)
+```
+
+Commentaire (CA potentiel): complete la lecture de la structure sociale locale et du positionnement prix/assortiment.
+
+### Carte 4 - Couples avec enfant(s)
+
+```{r t12-map4}
+map_iris_var(
+  "Men_fam_princ_Couple_enfant_s",
+  "IRIS - Couples avec enfant(s)",
+  "Purples"
+)
+```
+
+Commentaire (CA potentiel): utile pour estimer l'intensite de demande en achats alimentaires hebdomadaires et paniers familiaux.
+
+### Carte 5 - Mobilite voiture
+
+```{r t12-map5}
+map_iris_var(
+  "Actif_occ_15_ansplus_voiture_camion",
+  "IRIS - Actifs utilisant voiture/camion",
+  "RdPu"
+)
+```
+
+Commentaire (CA potentiel): la dependence automobile affecte la portee effective des zones de chalandise voiture.
+
+### Commentaire comparatif avant 2025 / 2025
+
+- Avant 2025 (base historique de concurrence: `data/raw/dataseed-sirene-2.shp`): utiliser ces cartes IRIS comme fond explicatif de la demande potentielle au moment du reseau historique.
+- 2025 (base recente: `data/actif/dataseed-sirene-1.shp`): conserver le meme fond IRIS pour comparer a perimetre socio-demographique constant, puis analyser la variation liee au reseau concurrentiel et aux drives.
 
 # Tache 1.3
 
 ## Analyse concurrence (cartes + indicateurs + isochrones + indices)
 
-### Cartes super/hyper
+### Cartes super/hyper - 2020
 
-- Une carte pour 2020 (`data/raw/dataseed-sirene-2.shp`)
-- Une carte pour 2025 (`data/actif/dataseed-sirene-1.shp`)
-- Symboles differenciant:
-- Type: super vs hyper
-- Groupe / reseau (couleur, shape, etc.)
+```{r t13-map-2020}
+plot_concurrence_map(
+  sirene_2020,
+  "Concurrence super/hyper - 2020 (dataseed-sirene-2)"
+)
+```
 
-### Carte drives 2025
+### Cartes super/hyper - 2025
 
-- Drives accoles + deportes
-- Enseigne visible
+```{r t13-map-2025}
+plot_concurrence_map(
+  sirene_2025,
+  "Concurrence super/hyper - 2025 (dataseed-sirene-1)"
+)
+```
 
-### Zones de chalandise 2025 (isochrones)
+### Carte drives 2025 (accoles + deportes)
 
-- Une carte avec les isochrones de chaque point de vente
-- Verification du recouvrement intra-enseigne (exclusivite territoriale)
+```{r t13-map-drives}
+drives_2025 <- sirene_2025 %>%
+  filter(drive_accole | drive_deporte) %>%
+  mutate(
+    type_drive = case_when(
+      drive_accole & drive_deporte ~ "accole + deporte",
+      drive_accole ~ "accole",
+      drive_deporte ~ "deporte",
+      TRUE ~ "aucun"
+    )
+  )
 
-### Accessibilite / couverture par IRIS
+if (nrow(drives_2025) == 0) {
+  plot.new()
+  title("Aucun drive 2025 detecte dans GROUPEXX_TabPonctuels_rapport1.csv")
+} else {
+  ggplot() +
+    geom_sf(data = iris_zone, fill = "grey97", color = "grey80", linewidth = 0.2) +
+    geom_sf(data = drives_2025, aes(color = type_drive), size = 3) +
+    geom_sf_text(
+      data = drives_2025,
+      aes(label = enseigne),
+      size = 2.8,
+      check_overlap = TRUE
+    ) +
+    scale_color_manual(values = c(accole = "#1b9e77", deporte = "#d95f02", `accole + deporte` = "#7570b3")) +
+    labs(
+      title = paste0(
+        "Drives 2025 (accoles et deportes) - Scope Grenoble+Nord: ",
+        nrow(drives_2025),
+        ifelse(!is.na(drives_total_csv), paste0(" | Total CSV agglo: ", drives_total_csv), "")
+      ),
+      color = "Type de drive"
+    ) +
+    theme_minimal()
+}
+```
 
-- Definir un seuil (minutes ou distance)
-- Calculer:
-- Nombre de points de vente accessibles par IRIS
-- Taux de couverture par IRIS
-- Produire 2 cartes (une par indicateur)
-- Comparer 2020 vs 2025 (cartes 2020/2025 hors dashboard, mais resultats verifiables)
+### Zones de chalandise 2025 (OTP isochrones voiture)
 
-### Indices et concentration
+```{r t13-iso-build}
+# Regles appliquees (Tache 1.1):
+# supermarche: 10 min (primaire), 15 min (secondaire)
+# hypermarche: 15 min (primaire), 30 min (secondaire)
 
-- Par enseigne et sur notre zone affectee (Grenoble + Nord):
-- Entropie
-- Moran
-- Un indicateur de concentration (ex: HHI sur parts d'etablissements, ou sur "capacite" si proxy disponible)
-- En 2020 et 2025
-- Enrichir avec infos nationales (parts de marche, etc.) + sources
+iso_method_used <- "OTP"
+iso_method_note <- "Isochrones OTP voiture"
 
-### TODO implementation
+iso_build <- tryCatch({
+  otpcon <- setup_otp_connection(cours_dir, attempt_start = FALSE)
 
-1. Construire jeux 2020/2025 harmonises (super/hyper/drives)
-2. Calculer isochrones et indicateurs IRIS
-3. Calculer indices (entropie, Moran, HHI)
-4. Produire cartes finales pour dashboard
-5. Ajouter bibliographie complete et liens de sources
+  iso_2025_all <- build_otp_isochrones(otpcon, sirene_2025)
+  iso_2020_all <- build_otp_isochrones(otpcon, sirene_2020)
 
+  iso_2025_local <- list(
+    primary = iso_2025_all %>% filter(seuil_iso == "primaire"),
+    secondary = iso_2025_all %>% filter(seuil_iso == "secondaire"),
+    all = iso_2025_all
+  )
+
+  iso_2020_local <- list(
+    primary = iso_2020_all %>% filter(seuil_iso == "primaire"),
+    secondary = iso_2020_all %>% filter(seuil_iso == "secondaire"),
+    all = iso_2020_all
+  )
+
+  list(
+    iso_method_used = "OTP",
+    iso_method_note = "Isochrones OTP voiture",
+    iso_2025 = iso_2025_local,
+    iso_2020 = iso_2020_local
+  )
+}, error = function(e) {
+  msg <- paste0("Fallback isodistance (OTP indisponible): ", conditionMessage(e))
+  message(msg)
+
+  list(
+    iso_method_used = "FALLBACK_PROXY",
+    iso_method_note = msg,
+    iso_2025 = make_proxy_iso_bundle(sirene_2025),
+    iso_2020 = make_proxy_iso_bundle(sirene_2020)
+  )
+})
+
+iso_method_used <- iso_build$iso_method_used
+iso_method_note <- iso_build$iso_method_note
+iso_2025 <- iso_build$iso_2025
+iso_2020 <- iso_build$iso_2020
+```
+
+```{r t13-map-iso}
+ggplot() +
+  geom_sf(data = iris_zone, fill = "grey98", color = "grey85", linewidth = 0.2) +
+  geom_sf(data = iso_2025$secondary, aes(fill = cutoff_label), alpha = 0.15, color = NA) +
+  geom_sf(data = iso_2025$primary, aes(fill = cutoff_label), alpha = 0.35, color = NA) +
+  geom_sf(data = sirene_2025, aes(shape = type_point_vente, color = groupe_reseau_nom), size = 2.2) +
+  scale_shape_manual(values = c(super = 16, hyper = 17), drop = FALSE) +
+  scale_fill_manual(
+    values = c(`10 min` = "#6baed6", `15 min` = "#9ecae1", `30 min` = "#fc9272"),
+    drop = FALSE
+  ) +
+  labs(
+    title = ifelse(
+      iso_method_used == "OTP",
+      "Zones de chalandise 2025 (OTP isochrones voiture)",
+      "Zones de chalandise 2025 (fallback isodistance)"
+    ),
+    subtitle = paste("Zone Grenoble + Nord |", iso_method_note),
+    fill = "Isochrone",
+    color = "Groupe / reseau",
+    shape = "Type (point)"
+  ) +
+  theme_minimal()
+```
+
+### Verification recouvrement intra-enseigne (2025)
+
+```{r t13-overlap}
+inter_list <- st_intersects(iso_2025$primary, iso_2025$primary)
+pairs <- bind_rows(lapply(seq_along(inter_list), function(i) {
+  js <- inter_list[[i]]
+  js <- js[js > i]
+  if (length(js) == 0) return(NULL)
+  tibble(i = i, j = js)
+}))
+
+if (nrow(pairs) == 0) {
+  tibble(message = "Aucun recouvrement detecte sur les zones primaires 2025.")
+} else {
+  pairs$groupe_i <- iso_2025$primary$groupe_reseau_nom[pairs$i]
+  pairs$groupe_j <- iso_2025$primary$groupe_reseau_nom[pairs$j]
+  pairs$enseigne_i <- iso_2025$primary$enseigne[pairs$i]
+  pairs$enseigne_j <- iso_2025$primary$enseigne[pairs$j]
+  pairs$same_group <- pairs$groupe_i == pairs$groupe_j
+
+  pairs %>%
+    filter(same_group) %>%
+    count(groupe_i, sort = TRUE, name = "nb_recouvrements_intra_groupe")
+}
+```
+
+### Verification recouvrement intra-enseigne (2025) hors Groupe Carrefour
+
+```{r t13-overlap-hors-carrefour}
+inter_list <- st_intersects(iso_2025$primary, iso_2025$primary)
+pairs <- bind_rows(lapply(seq_along(inter_list), function(i) {
+  js <- inter_list[[i]]
+  js <- js[js > i]
+  if (length(js) == 0) return(NULL)
+  tibble(i = i, j = js)
+}))
+
+if (nrow(pairs) == 0) {
+  tibble(message = "Aucun recouvrement detecte sur les zones primaires 2025.")
+} else {
+  pairs <- pairs %>%
+    mutate(
+      groupe_i = iso_2025$primary$groupe_reseau_nom[i],
+      groupe_j = iso_2025$primary$groupe_reseau_nom[j],
+      enseigne_i = iso_2025$primary$enseigne[i],
+      enseigne_j = iso_2025$primary$enseigne[j],
+      same_group = groupe_i == groupe_j
+    ) %>%
+    filter(same_group) %>%
+    filter(!is.na(groupe_i), groupe_i != "Groupe Carrefour")
+
+  if (nrow(pairs) == 0) {
+    tibble(message = "Aucun recouvrement intra-enseigne detecte hors Groupe Carrefour.")
+  } else {
+    id_vec <- if ("otp_id" %in% names(iso_2025$primary)) {
+      as.character(iso_2025$primary$otp_id)
+    } else {
+      as.character(seq_len(nrow(iso_2025$primary)))
+    }
+
+    list(
+      resume = pairs %>%
+        count(groupe_i, sort = TRUE, name = "nb_recouvrements_intra_groupe"),
+      details = pairs %>%
+        transmute(
+          groupe = groupe_i,
+          enseigne_a = enseigne_i,
+          enseigne_b = enseigne_j,
+          otp_id_a = id_vec[i],
+          otp_id_b = id_vec[j]
+        ) %>%
+        arrange(groupe, enseigne_a, enseigne_b)
+    )
+  }
+}
+```
+
+#### Interpretation des resultats - Recouvrement intra-enseigne (2025)
+
+Nous testons le recouvrement des zones de chalandise (isochrones 2025) entre points de vente appartenant a une meme enseigne/groupe. Un recouvrement important indique un maillage dense pouvant generer de la cannibalisation interne (plusieurs magasins du meme groupe se partagent la meme clientele potentielle) ou un non-respect de l'idee d'exclusivite territoriale (quand elle existe dans les pratiques commerciales).
+
+En 2025, le groupe Carrefour presente 18 recouvrements intra-groupe. Cela suggere une presence Carrefour tres concentree spatialement sur la zone etudiee, avec plusieurs points de vente dont les zones de chalandise se superposent. Ce resultat renforce l'idee que, localement, Carrefour opere plutot une logique de couverture maximale du territoire que de separation stricte des clienteles par magasin.
+
+### Accessibilite / couverture par IRIS (2025)
+
+```{r t13-access-build}
+iris_access_2025 <- compute_access_indicators(iris_zone, iso_2025$primary, "CODE_IRIS")
+iris_access_2020 <- compute_access_indicators(iris_zone, iso_2020$primary, "CODE_IRIS")
+```
+
+```{r t13-map-access-count}
+tm_shape(iris_access_2025) +
+  tm_polygons(
+    col = "nb_pdv_access",
+    palette = "YlOrRd",
+    style = "pretty",
+    title = ifelse(iso_method_used == "OTP", "Nb points accessibles (OTP)", "Nb points accessibles (fallback)")
+  ) +
+  tm_layout(
+    main.title = "Accessibilite 2025 par IRIS",
+    legend.outside = TRUE
+  )
+```
+
+```{r t13-map-access-rate}
+tm_shape(iris_access_2025) +
+  tm_polygons(
+    col = "taux_couverture",
+    palette = "Blues",
+    style = "cont",
+    title = "Taux couverture (%)"
+  ) +
+  tm_layout(
+    main.title = "Couverture 2025 par IRIS",
+    legend.outside = TRUE
+  )
+```
+
+### Comparaison 2020 vs 2025 (resultats verifiables)
+
+```{r t13-compare-2020-2025}
+comparison_access <- tibble::tibble(
+  annee = c("2020", "2025"),
+  nb_iris = c(nrow(iris_access_2020), nrow(iris_access_2025)),
+  moyenne_nb_access = c(mean(iris_access_2020$nb_pdv_access, na.rm = TRUE), mean(iris_access_2025$nb_pdv_access, na.rm = TRUE)),
+  mediane_nb_access = c(median(iris_access_2020$nb_pdv_access, na.rm = TRUE), median(iris_access_2025$nb_pdv_access, na.rm = TRUE)),
+  moyenne_couverture_pct = c(mean(iris_access_2020$taux_couverture, na.rm = TRUE), mean(iris_access_2025$taux_couverture, na.rm = TRUE)),
+  mediane_couverture_pct = c(median(iris_access_2020$taux_couverture, na.rm = TRUE), median(iris_access_2025$taux_couverture, na.rm = TRUE))
+)
+comparison_access
+```
+
+#### Interpretation des resultats - Accessibilite et couverture IRIS (2020 vs 2025)
+
+Nous mesurons:
+
+- le nombre de points de vente accessibles par IRIS sous un seuil donne,
+- un taux de couverture (part de la population/surface de l'IRIS couverte, selon la definition retenue dans le modele).
+
+Les resultats indiquent:
+
+- une legere baisse du nombre moyen de points accessibles (≈ 2,10 -> 2,00) entre 2020 et 2025,
+- une hausse du taux de couverture moyen (≈ 54% -> 60%),
+- des medianes stables (≈ 2 points accessibles ; ≈ 73% de couverture).
+
+Interpretation: entre 2020 et 2025, la zone semble mieux couverte (moins de "trous" de desserte), mais avec un choix concurrentiel moyen legerement reduit (moins de points accessibles simultanement). Cela peut correspondre a une restructuration du reseau (fermetures, conversions, changements d'enseigne) et l'ajout d'un hypermarche qui ameliore la couverture spatiale tout en reduisant la densite de concurrence locale dans certains secteurs.
+
+### Indices et concentration (Grenoble + Nord)
+
+```{r t13-indices}
+zone_affectee <- communes_nord
+
+calc_hhi_entropy <- function(sirene_sf, year_name) {
+  sub <- sirene_sf %>%
+    filter(commune_norm %in% zone_affectee) %>%
+    count(groupe_reseau_nom, name = "n") %>%
+    filter(n > 0) %>%
+    mutate(part = n / sum(n))
+
+  if (nrow(sub) == 0) {
+    return(tibble::tibble(annee = year_name, n_groupes = 0, hhi = NA_real_, entropie_norm = NA_real_))
+  }
+
+  hhi <- sum(sub$part^2)
+  entropie <- -sum(sub$part * log(sub$part))
+  entropie_norm <- ifelse(nrow(sub) > 1, entropie / log(nrow(sub)), 0)
+
+  tibble::tibble(
+    annee = year_name,
+    n_groupes = nrow(sub),
+    hhi = hhi,
+    entropie_norm = entropie_norm
+  )
+}
+
+indices_concentration <- bind_rows(
+  calc_hhi_entropy(sirene_2020, "2020"),
+  calc_hhi_entropy(sirene_2025, "2025")
+)
+
+indices_concentration
+```
+
+#### Interpretation des resultats - HHI et entropie (Grenoble + Nord)
+
+Nous calculons un indicateur de concentration au niveau des enseignes/groupes a partir des parts de presence (part de points de vente par groupe) sur la zone "Grenoble + Nord". Deux mesures complementaires sont mobilisees:
+
+- HHI: somme des carres des parts (plus HHI est eleve, plus la structure est concentree autour de quelques groupes),
+- Entropie normalisee: mesure de diversite/equilibre (plus elle est elevee, plus la repartition est equilibree entre groupes).
+
+Entre 2020 et 2025:
+
+- le HHI baisse legerement (≈ 0,242 -> 0,239),
+- l'entropie normalisee augmente (≈ 0,815 -> 0,844),
+- le nombre de groupes reste stable (8).
+
+Interpretation: la concurrence apparait legerement moins concentree en 2025 qu'en 2020, et la presence des groupes est un peu plus equilibree. Autrement dit, aucun groupe n'a renforce fortement une domination locale; on observe plutot une repartition un peu plus pluraliste.
+
+```{r t13-moran-optional}
+if (requireNamespace("spdep", quietly = TRUE)) {
+  nb <- spdep::poly2nb(iris_access_2025, queen = TRUE)
+  lw <- spdep::nb2listw(nb, style = "W", zero.policy = TRUE)
+  mt <- spdep::moran.test(iris_access_2025$nb_pdv_access, lw, zero.policy = TRUE)
+  moran_i <- as.numeric(mt$estimate[[1]])
+  tibble::tibble(
+    variable = "nb_pdv_access_2025",
+    moran_i = moran_i,
+    p_value = mt$p.value
+  )
+} else {
+  tibble::tibble(
+    variable = "nb_pdv_access_2025",
+    moran_i = NA_real_,
+    p_value = NA_real_,
+    note = "Package spdep non installe: calcul Moran saute."
+  )
+}
+```
+
+#### Interpretation des resultats - Moran's I (accessibilite 2025)
+
+Nous testons si la variable `nb_pdv_access_2025` (nombre de points de vente accessibles par IRIS) presente une structure spatiale (regroupements) plutot qu'une distribution aleatoire. Pour cela, nous utilisons Moran's I, calcule sur une matrice de voisinage des IRIS (contiguite) avec ponderations spatiales.
+
+Le resultat 2025 est tres marque:
+
+- Moran's I ≈ 0,73
+- p-value extremement faible (<< 0,001)
+
+Interpretation: l'accessibilite n'est pas distribuee au hasard; elle est fortement autocorreelee spatialement. Concretement, il existe des clusters d'IRIS tres bien desservis (valeurs elevees proches les unes des autres) et des poches d'IRIS moins desservis (valeurs faibles regroupees). Ce diagnostic est crucial pour l'implantation: un nouvel etablissement a davantage d'interet strategique dans une zone structurellement sous-desservie, si la demande potentielle y est suffisante.
+
+### Sources nationales a enrichir dans la version finale
+
+- Parts de marche nationales par enseigne (Kantar, INSEE, rapports annuels, presse professionnelle specialisee).
+- Documentation methodologique du CA potentiel (source a ajouter dans la bibliographie finale du rapport).
