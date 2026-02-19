@@ -122,6 +122,13 @@ map_group <- function(txt_upper) {
   out
 }
 
+normalize_overlap_group <- function(g) {
+  dplyr::case_when(
+    g %in% c("Groupe Auchan", "Groupe Casino") ~ "Alliance Auchan-Casino",
+    TRUE ~ g
+  )
+}
+
 prepare_sirene <- function(sirene_sf_raw, year_label, communes_zone_norm) {
   nm <- names(sirene_sf_raw)
 
@@ -466,7 +473,10 @@ compute_access_indicators <- function(iris_sf, iso_primary_sf, code_col = "CODE_
     }
   }
 
+  # Bornage strict pour eviter les depassements numeriques marginaux.
+  out$intersect_area <- pmin(out$intersect_area, out$iris_area)
   out$taux_couverture <- ifelse(out$iris_area > 0, 100 * out$intersect_area / out$iris_area, 0)
+  out$taux_couverture <- pmin(100, pmax(0, out$taux_couverture))
   st_transform(out, st_crs(iris_sf))
 }
 
@@ -938,12 +948,14 @@ if (nrow(pairs) == 0) {
     mutate(
       groupe_i = iso_2025$primary$groupe_reseau_nom[i],
       groupe_j = iso_2025$primary$groupe_reseau_nom[j],
+      groupe_i_norm = normalize_overlap_group(groupe_i),
+      groupe_j_norm = normalize_overlap_group(groupe_j),
       enseigne_i = iso_2025$primary$enseigne[i],
       enseigne_j = iso_2025$primary$enseigne[j],
-      same_group = groupe_i == groupe_j
+      same_group = groupe_i_norm == groupe_j_norm
     ) %>%
     filter(same_group) %>%
-    filter(!is.na(groupe_i), groupe_i != "Groupe Carrefour")
+    filter(!is.na(groupe_i_norm), groupe_i_norm != "Groupe Carrefour")
 
   if (nrow(pairs) == 0) {
     tibble(message = "Aucun recouvrement intra-enseigne detecte hors Groupe Carrefour.")
@@ -956,10 +968,10 @@ if (nrow(pairs) == 0) {
 
     list(
       resume = pairs %>%
-        count(groupe_i, sort = TRUE, name = "nb_recouvrements_intra_groupe"),
+        count(groupe_i_norm, sort = TRUE, name = "nb_recouvrements_intra_groupe"),
       details = pairs %>%
         transmute(
-          groupe = groupe_i,
+          groupe = groupe_i_norm,
           enseigne_a = enseigne_i,
           enseigne_b = enseigne_j,
           otp_id_a = id_vec[i],
@@ -1015,13 +1027,31 @@ tm_shape(iris_access_2025) +
 ### Comparaison 2020 vs 2025 (resultats verifiables)
 
 ```{r t13-compare-2020-2025}
-comparison_access <- tibble::tibble(
-  annee = c("2020", "2025"),
-  nb_iris = c(nrow(iris_access_2020), nrow(iris_access_2025)),
-  moyenne_nb_access = c(mean(iris_access_2020$nb_pdv_access, na.rm = TRUE), mean(iris_access_2025$nb_pdv_access, na.rm = TRUE)),
-  mediane_nb_access = c(median(iris_access_2020$nb_pdv_access, na.rm = TRUE), median(iris_access_2025$nb_pdv_access, na.rm = TRUE)),
-  moyenne_couverture_pct = c(mean(iris_access_2020$taux_couverture, na.rm = TRUE), mean(iris_access_2025$taux_couverture, na.rm = TRUE)),
-  mediane_couverture_pct = c(median(iris_access_2020$taux_couverture, na.rm = TRUE), median(iris_access_2025$taux_couverture, na.rm = TRUE))
+summarise_access_metrics <- function(access_sf, year_label) {
+  x_cov <- as.numeric(access_sf$taux_couverture)
+  x_cov <- pmin(100, pmax(0, x_cov))
+  x_cov_non_sat <- x_cov[x_cov < 99.999]
+  median_non_sat <- if (length(x_cov_non_sat) == 0) {
+    NA_real_
+  } else {
+    median(x_cov_non_sat, na.rm = TRUE)
+  }
+
+  tibble::tibble(
+    annee = year_label,
+    nb_iris = nrow(access_sf),
+    moyenne_nb_access = mean(access_sf$nb_pdv_access, na.rm = TRUE),
+    mediane_nb_access = median(access_sf$nb_pdv_access, na.rm = TRUE),
+    moyenne_couverture_pct = mean(x_cov, na.rm = TRUE),
+    mediane_couverture_pct = median_non_sat,
+    mediane_couverture_brute_pct = median(x_cov, na.rm = TRUE),
+    part_iris_couverture_100_pct = 100 * mean(x_cov >= 99.999, na.rm = TRUE)
+  )
+}
+
+comparison_access <- bind_rows(
+  summarise_access_metrics(iris_access_2020, "2020"),
+  summarise_access_metrics(iris_access_2025, "2025")
 )
 comparison_access
 ```
@@ -1032,6 +1062,8 @@ Nous mesurons:
 
 - le nombre de points de vente accessibles par IRIS sous un seuil donne,
 - un taux de couverture (part de la population/surface de l'IRIS couverte, selon la definition retenue dans le modele).
+
+Pour eviter un artefact de saturation (beaucoup d'IRIS a 100%), la variable `mediane_couverture_pct` est calculee sur les IRIS non totalement couverts (`< 100%`). La mediane brute est conservee dans `mediane_couverture_brute_pct`, avec la part d'IRIS a 100% (`part_iris_couverture_100_pct`).
 
 Les resultats indiquent:
 
