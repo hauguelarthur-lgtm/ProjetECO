@@ -752,12 +752,12 @@ kable(dico_donnees, caption="Dictionnaire des variables")
 Isochrones
 
 - Voiture (principal)
-- Zone primaire : 20 min (environ 9,9 km)
-- Zone secondaire : 30 min (environ 14,8 km)
+  - Zone primaire : 20 min (environ 9,9 km)
+  - Zone secondaire : 30 min (environ 14,8 km)
 - Transports en commun (complément intra-agglo, si hyper accessible tram/bus/gares)
-- Zone primaire : 30 min porte-a-porte (marche d'acces + attente + trajet + correspondance)
-- Zone secondaire : 45 min porte-a-porte
-- Acces au reseau : 8 a 10 min a pied (environ 0,4 a 0,5 km autour des arrets/gares)
+  - Zone primaire : 30 min porte-a-porte (marche d'acces + attente + trajet + correspondance)
+  - Zone secondaire : 45 min porte-a-porte
+  - Acces au reseau : 8 a 10 min a pied (environ 0,4 a 0,5 km autour des arrets/gares)
 
 Justification
 
@@ -768,18 +768,18 @@ La pratique decisionnelle en distribution alimentaire retient classiquement des 
 Isochrones
 
 - Voiture (principal)
-- Zone primaire : 10 min (environ 4,9 km)
-- Zone secondaire : 15 min (environ 7,4 km)
+  - Zone primaire : 10 min (environ 4,9 km)
+  - Zone secondaire : 15 min (environ 7,4 km)
 - Velo (complement intra-Grenoble / 1ere couronne)
-- Zone primaire : 10 min (environ 1,6 km)
-- Zone secondaire : 15 min (environ 2,3 km)
+  - Zone primaire : 10 min (environ 1,6 km)
+  - Zone secondaire : 15 min (environ 2,3 km)
 - Pieton (si supermarche urbain / central)
-- Zone primaire : 5 min (environ 0,25 km)
-- Zone secondaire : 10 min (environ 0,5 km)
+  - Zone primaire : 5 min (environ 0,25 km)
+  - Zone secondaire : 10 min (environ 0,5 km)
 - Transports en commun (si magasin sur axe tram/bus)
-- Zone primaire : 20 min porte-a-porte
-- Zone secondaire : 30 min porte-a-porte
-- Acces au reseau : 8 a 10 min a pied (environ 0,4 a 0,5 km)
+  - Zone primaire : 20 min porte-a-porte
+  - Zone secondaire : 30 min porte-a-porte
+  - Acces au reseau : 8 a 10 min a pied (environ 0,4 a 0,5 km)
 
 Justification
 
@@ -790,17 +790,17 @@ Pour les supermarches/discount, la reference la plus defendable est l'usage d'is
 Isochrones
 
 - Pieton (principal)
-- Zone primaire : 5 min (environ 0,25 km)
-- Zone secondaire : 10 min (environ 0,5 km)
+  - Zone primaire : 5 min (environ 0,25 km)
+  - Zone secondaire : 10 min (environ 0,5 km)
 - Velo (secondaire, elargissement urbain)
-- Zone primaire : 10 min (environ 1,6 km)
-- Zone secondaire : 15 min (environ 2,3 km)
+  - Zone primaire : 10 min (environ 1,6 km)
+  - Zone secondaire : 15 min (environ 2,3 km)
 - Transports en commun (si proximite d'un arret)
-- Zone primaire : 15 a 20 min porte-a-porte
-- Zone secondaire : 30 min porte-a-porte
-- Acces au reseau : 8 a 10 min a pied (environ 0,4 a 0,5 km)
+  - Zone primaire : 15 a 20 min porte-a-porte
+  - Zone secondaire : 30 min porte-a-porte
+  - Acces au reseau : 8 a 10 min a pied (environ 0,4 a 0,5 km)
 - Voiture (tertiaire, a utiliser avec prudence en centre dense)
-- Zone tertiaire : 5 a 10 min (environ 2,5 a 4,9 km)
+  - Zone tertiaire : 5 a 10 min (environ 2,5 a 4,9 km)
 
 Justification
 
