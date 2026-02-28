@@ -100,6 +100,37 @@ classify_type_pv <- function(df, naf_cols, classe_cols, enseigne_cols, denom_col
   factor(out, levels = c("super", "hyper", "superette"))
 }
 
+separate_overlapping_points <- function(sf_points, offset_m = 20) {
+  if (!inherits(sf_points, "sf") || nrow(sf_points) == 0) return(sf_points)
+
+  geom_type <- unique(as.character(sf::st_geometry_type(sf_points, by_geometry = TRUE)))
+  if (!all(geom_type %in% c("POINT", "MULTIPOINT"))) return(sf_points)
+
+  crs_in <- sf::st_crs(sf_points)
+  pts_3857 <- sf::st_transform(sf_points, 3857)
+  coords <- sf::st_coordinates(pts_3857)
+
+  # Cle coordonnee arrondie pour identifier les points strictement superposes.
+  key <- paste(round(coords[, 1], 3), round(coords[, 2], 3), sep = "_")
+  grp <- split(seq_len(nrow(pts_3857)), key)
+
+  new_coords <- coords[, 1:2, drop = FALSE]
+  for (idx in grp) {
+    if (length(idx) <= 1) next
+    n <- length(idx)
+    angles <- seq(0, 2 * pi, length.out = n + 1)[1:n]
+    new_coords[idx, 1] <- coords[idx, 1] + offset_m * cos(angles)
+    new_coords[idx, 2] <- coords[idx, 2] + offset_m * sin(angles)
+  }
+
+  sf::st_geometry(pts_3857) <- sf::st_sfc(
+    lapply(seq_len(nrow(new_coords)), function(i) sf::st_point(new_coords[i, ])),
+    crs = sf::st_crs(pts_3857)
+  )
+
+  sf::st_transform(pts_3857, crs_in)
+}
+
 map_group_reseau <- function(enseigne, denomination = NULL) {
   txt <- str_to_upper(str_squish(paste(enseigne, denomination, sep = " | ")))
   case_when(
@@ -526,6 +557,13 @@ message(
   n_zone_after_naf, " points conserves sur ", n_zone_before_naf
 )
 message("Nombre de points (super/hyper/superette) dans la zone : ", nrow(sirene_zone_etude))
+message(
+  "Detail 2025 apres filtre NAF: ",
+  paste(
+    paste0(names(table(sirene_zone_etude$Type_PV)), "=", as.integer(table(sirene_zone_etude$Type_PV))),
+    collapse = ", "
+  )
+)
 
 ```
 
@@ -875,6 +913,10 @@ sirene_zone_etude$groupe_reseau_nom <- map_group_reseau(
   sirene_zone_etude$denominatio
 )
 
+# Copie pour affichage cartographique: separation des points superposes
+# afin d'eviter un sous-comptage visuel.
+sirene_zone_etude_plot <- separate_overlapping_points(sirene_zone_etude, offset_m = 22)
+
 
 ```
 
@@ -892,6 +934,7 @@ tmap_mode("view")
 
 # Fonction pour créer une carte avec id et popup
 creer_carte <- function(sf_polygones, sf_points, var_poly, titre, palette="Blues") {
+  sf_points_plot <- separate_overlapping_points(sf_points, offset_m = 22)
   tm_shape(sf_polygones) +
   
   tm_text(text = "iris_name", size=0.8) +
@@ -904,7 +947,7 @@ creer_carte <- function(sf_polygones, sf_points, var_poly, titre, palette="Blues
     id = "iris_name",           # affichage du nom IRIS au survol
     popup.vars = var_poly       # valeur de la variable dans le popup
   ) +
-  tm_shape(sf_points) +
+  tm_shape(sf_points_plot) +
   tm_symbols(
     fill = "Enseigne",
     fill.legend = tm_legend(title = "Enseigne"),
@@ -921,10 +964,11 @@ creer_carte <- function(sf_polygones, sf_points, var_poly, titre, palette="Blues
 }
 
 plot_concurrence_map <- function(sirene_sf, title_txt) {
+  sirene_sf_plot <- separate_overlapping_points(sirene_sf, offset_m = 22)
   ggplot() +
     geom_sf(data = iris_zone_etude, fill = "grey97", color = "grey80", linewidth = 0.2) +
     geom_sf(
-      data = sirene_sf,
+      data = sirene_sf_plot,
       aes(color = groupe_reseau_nom, shape = Type_PV),
       size = 2.2,
       alpha = 0.95
@@ -1205,6 +1249,14 @@ map_2025 <- plot_concurrence_map(
   "Concurrence super/hyper - 2025 (dataseed-sirene-1)"
 )
 
+knitr::kable(
+  sirene_zone_etude %>%
+    st_drop_geometry() %>%
+    count(Type_PV, name = "nb_etablissements") %>%
+    arrange(match(Type_PV, c("hyper", "super", "superette"))),
+  caption = "Controle 2025 - etablissements conserves apres filtre NAF"
+)
+
 ```
 
 ## Carte 2020
@@ -1263,7 +1315,19 @@ tm_shape(iris_zone_etude) +
     id = "iris_name",
     title = "% Actifs 15-64 ans"
   ) +
-  tm_shape(sirene_zone_etude) +
+  tm_shape(iso) +
+  tm_fill(
+    "minutes",
+    breaks = c(0, 5.01, 8.01, 10.01),
+    title = "Isochrones (minutes)",
+    style = "fixed",
+    labels = c("0 a 5", "5 a 8 (acces reseau hyper)", "8 a 10"),
+    palette = "Reds",
+    id = "minutes",
+    alpha = 0.3
+  ) +
+  tm_borders() +
+  tm_shape(sirene_zone_etude_plot) +
   tm_symbols(
     fill = "Enseigne",
     fill.legend = tm_legend(title = "Enseigne"),
@@ -1276,19 +1340,7 @@ tm_shape(iris_zone_etude) +
     id = "siren",
     popup.vars = c("Enseigne", "Classe", "Type_PV")
   ) +
-  tm_layout(title = "Zones de chalandise (à pied)",legend.outside = TRUE) +
-  tm_shape(iso) +
-  tm_fill(
-    "minutes",
-    breaks = c(0, 5.01, 8.01, 10.01),
-    title = "Isochrones (minutes)",
-    style = "fixed",
-    labels = c("0 a 5", "5 a 8 (acces reseau hyper)", "8 a 10"),
-    palette = "Reds",
-    id = "minutes",
-    alpha = 0.3
-  ) +
-  tm_borders()
+  tm_layout(title = "Zones de chalandise (à pied)",legend.outside = TRUE)
 
 ```
 
@@ -1373,7 +1425,19 @@ tm_shape(iris_zone_etude) +
     id = "iris_name",
     title = "% Ménages avec une voiture"
   ) +
-  tm_shape(sirene_zone_etude) +
+  tm_shape(iso_car) +
+  tm_fill(
+    "minutes",
+    breaks = c(0, 5.01, 10.01, 15.01, 20.01, 30.01),
+    title = "Isochrones voiture (minutes)",
+    style = "fixed",
+    labels = c("0 à 5", "5 à 10", "10 à 15", "15 à 20", "20 à 30"),
+    palette = "Oranges",
+    id = "minutes",
+    alpha = 0.3
+  ) +
+  tm_borders() +
+  tm_shape(sirene_zone_etude_plot) +
   tm_symbols(
     fill = "Enseigne",
     fill.legend = tm_legend(title = "Enseigne"),
@@ -1386,19 +1450,7 @@ tm_shape(iris_zone_etude) +
     id = "siren",
     popup.vars = c("Enseigne", "Classe", "Type_PV")
   ) +
-  tm_layout(title= "Zones de chalandise (en voiture)", legend.outside = TRUE) +
-  tm_shape(iso_car) +
-  tm_fill(
-    "minutes",
-    breaks = c(0, 5.01, 10.01, 15.01, 20.01, 30.01),
-    title = "Isochrones voiture (minutes)",
-    style = "fixed",
-    labels = c("0 à 5", "5 à 10", "10 à 15", "15 à 20", "20 à 30"),
-    palette = "Oranges",
-    id = "minutes",
-    alpha = 0.3
-  ) +
-  tm_borders()
+  tm_layout(title= "Zones de chalandise (en voiture)", legend.outside = TRUE)
 
 ```
 
@@ -1478,13 +1530,18 @@ if (nrow(iso_primary_car) == 0) {
     st_drop_geometry() %>%
     dplyr::transmute(iris_name, intersect_area = 0)
 } else {
-  intersect_pct <- st_intersection(iris_zone_etude, iso_primary_car) %>%
+  # Union des isochrones primaires pour eviter le double comptage des recouvrements.
+  iso_primary_union <- st_union(st_geometry(iso_primary_car))
+  iso_primary_union <- st_sf(id = 1, geometry = st_sfc(iso_primary_union, crs = st_crs(iso_primary_car)))
+
+  intersect_pct <- st_intersection(
+    iris_zone_etude %>% dplyr::select(iris_name),
+    iso_primary_union
+  ) %>%
     mutate(intersect_area = st_area(.)) %>%
-    dplyr::select(iris_name, intersect_area) %>%
-    group_by(iris_name) %>%
-    mutate(intersect_area = sum(intersect_area)) %>%
     st_drop_geometry() %>%
-    unique()
+    dplyr::group_by(iris_name) %>%
+    dplyr::summarise(intersect_area = sum(intersect_area), .groups = "drop")
 }
 ```
 
@@ -1498,11 +1555,11 @@ iris_zone_etude <- merge(iris_zone_etude, intersect_pct, by = "iris_name", all.x
 
 iris_zone_etude <- iris_zone_etude %>%
   mutate(intersect_area = ifelse(is.na(intersect_area), 0, intersect_area)) %>%
-  mutate(couverture = as.numeric(intersect_area / iris_area) * 100)
+  mutate(couverture_pct = pmin(100, as.numeric(intersect_area / iris_area) * 100))
 
 tm_shape(iris_zone_etude) +
   tm_polygons(
-    fill = "couverture",
+    fill = "couverture_pct",
     fill_alpha = 0.5,
     fill.scale = tm_scale_continuous(),
     id = "iris_name",
@@ -1510,7 +1567,7 @@ tm_shape(iris_zone_etude) +
     fill.legend = tm_legend(title = "Couverture (%)")
   ) +
   tm_text(text = "iris_name", size = 0.8) +
-  tm_shape(sirene_zone_etude) +
+  tm_shape(sirene_zone_etude_plot) +
   tm_symbols(
     fill = "Enseigne",
     fill.legend = tm_legend(title = "Enseigne"),
@@ -1524,5 +1581,382 @@ tm_shape(iris_zone_etude) +
     popup.vars = c("Enseigne", "Classe", "Type_PV")
   ) +
   tm_layout(title = "Couverture des IRIS (zone primaire hierarchisee hyper>super>superette)", legend.outside = TRUE)
+```
+
+# PARTIE 7: Autocorrelation spatiale et econometrie spatiale (application Grenoble + Nord)
+
+## 7.1 Construction des voisinages spatiaux
+
+```{r}
+spdep_ok <- requireNamespace("spdep", quietly = TRUE)
+spatialreg_ok <- requireNamespace("spatialreg", quietly = TRUE)
+
+pkg_status <- data.frame(
+  package = c("spdep", "spatialreg"),
+  disponible = c(spdep_ok, spatialreg_ok)
+)
+print(knitr::kable(pkg_status, caption = "Disponibilite des packages spatiaux"))
+
+nb_rook <- NULL
+nb_knn <- NULL
+nb_dist <- NULL
+W_rook <- NULL
+W_knn <- NULL
+W_dist <- NULL
+
+if (!spdep_ok) {
+  info_tbl <- data.frame(
+    etat = "Analyse de voisinage non executee",
+    raison = "Le package spdep est absent. Installer spdep pour activer la Partie 7."
+  )
+  print(knitr::kable(info_tbl, caption = "Etat de la Partie 7.1"))
+} else {
+  iris_spatial <- iris_zone_etude %>%
+    sf::st_make_valid() %>%
+    dplyr::select(iris_name, everything())
+
+  if (is.na(sf::st_crs(iris_spatial))) {
+    sf::st_crs(iris_spatial) <- 4326
+  }
+
+  iris_centroids <- sf::st_point_on_surface(sf::st_transform(iris_spatial, 4326))
+  coords <- sf::st_coordinates(iris_centroids)
+
+  # Rook (adjacence stricte)
+  nb_rook <- spdep::poly2nb(sf::st_transform(iris_spatial, 2154), queen = FALSE)
+
+  # K plus proches voisins
+  k_val <- min(3, max(1, nrow(iris_spatial) - 1))
+  nb_knn <- spdep::knn2nb(spdep::knearneigh(coords, k = k_val, longlat = TRUE))
+
+  # Voisinage par distance: seuil calibre sur la distribution des distances KNN.
+  knn_dists <- unlist(spdep::nbdists(nb_knn, coords, longlat = TRUE))
+  d2 <- as.numeric(stats::quantile(knn_dists, probs = 0.9, na.rm = TRUE))
+  if (!is.finite(d2) || d2 <= 0) d2 <- max(knn_dists, na.rm = TRUE)
+  nb_dist <- spdep::dnearneigh(coords, d1 = 0, d2 = d2, longlat = TRUE)
+  if (any(spdep::card(nb_dist) == 0)) {
+    d2 <- max(knn_dists, na.rm = TRUE)
+    nb_dist <- spdep::dnearneigh(coords, d1 = 0, d2 = d2, longlat = TRUE)
+  }
+
+  W_rook <- spdep::nb2listw(nb_rook, style = "W", zero.policy = TRUE)
+  W_knn <- spdep::nb2listw(nb_knn, style = "W", zero.policy = TRUE)
+  W_dist <- spdep::nb2listw(nb_dist, style = "W", zero.policy = TRUE)
+
+  voisinage_resume <- data.frame(
+    methode = c("Rook", paste0("KNN (k=", k_val, ")"), paste0("Distance (<= ", round(d2, 2), " km)")),
+    nb_liens = c(sum(spdep::card(nb_rook)), sum(spdep::card(nb_knn)), sum(spdep::card(nb_dist))),
+    nb_iris_sans_voisin = c(sum(spdep::card(nb_rook) == 0), sum(spdep::card(nb_knn) == 0), sum(spdep::card(nb_dist) == 0))
+  )
+  print(knitr::kable(voisinage_resume, caption = "Resume des structures de voisinage"))
+
+  voisins_rook_sf <- sf::st_as_sf(spdep::nb2lines(nb_rook, coords = coords))
+  sf::st_crs(voisins_rook_sf) <- sf::st_crs(iris_centroids)
+
+  ggplot() +
+    geom_sf(data = sf::st_transform(iris_spatial, 4326), fill = "grey96", color = "grey75", linewidth = 0.2) +
+    geom_sf(data = voisins_rook_sf, color = "#2C7FB8", linewidth = 0.4, alpha = 0.7) +
+    geom_sf(data = iris_centroids, color = "#084081", size = 1.2) +
+    labs(
+      title = "Voisinage spatial Rook (IRIS Grenoble + Nord)",
+      subtitle = "Liaisons d'adjacence entre IRIS"
+    ) +
+    theme_minimal()
+}
+```
+
+## 7.2 Indices de concentration spatiale (entropie + Moran)
+
+```{r}
+if (!spdep_ok || is.null(W_dist)) {
+  info_tbl <- data.frame(
+    etat = "Indices non calcules",
+    raison = "Les objets de voisinage ne sont pas disponibles."
+  )
+  print(knitr::kable(info_tbl, caption = "Etat de la Partie 7.2"))
+} else {
+  entropy_relative <- function(x) {
+    x <- as.numeric(x)
+    x[!is.finite(x)] <- 0
+    N <- sum(x)
+    if (!is.finite(N) || N <= 0) return(NA_real_)
+    f <- x / N
+    f <- f[f > 0]
+    if (length(f) <= 1) return(0)
+    E <- -sum(f * log(f))
+    as.numeric(E / log(length(x)))
+  }
+
+  safe_moran <- function(x, listw) {
+    x <- as.numeric(x)
+    keep <- is.finite(x)
+    if (sum(keep) < 3) return(list(I = NA_real_, p_value = NA_real_))
+    xk <- x[keep]
+    if (stats::var(xk) == 0) return(list(I = NA_real_, p_value = NA_real_))
+    lw <- spdep::subset.listw(listw, subset = keep, zero.policy = TRUE)
+    tst <- tryCatch(spdep::moran.test(xk, lw, zero.policy = TRUE), error = function(e) NULL)
+    if (is.null(tst)) return(list(I = NA_real_, p_value = NA_real_))
+    list(
+      I = as.numeric(tst$estimate[["Moran I statistic"]]),
+      p_value = as.numeric(tst$p.value)
+    )
+  }
+
+  y_total <- as.numeric(iris_zone_etude$Nb_pdv_access_primaire_voiture)
+  total_entropy <- entropy_relative(y_total)
+  total_moran <- safe_moran(y_total, W_dist)
+
+  if (exists("data_temp2") && "iris_name" %in% names(data_temp2)) {
+    enseignes_counts <- data_temp2 %>%
+      dplyr::select(-iris_name) %>%
+      dplyr::mutate(dplyr::across(everything(), ~ as.numeric(.x)))
+  } else {
+    enseignes_counts <- data.frame()
+  }
+
+  if (ncol(enseignes_counts) == 0) {
+    indices_concentration <- data.frame(
+      segment = "TOTAL",
+      entropie_relative = total_entropy,
+      moran_I = total_moran$I,
+      moran_p_value = total_moran$p_value
+    )
+  } else {
+    entropy_by_ens <- sapply(enseignes_counts, entropy_relative)
+    moran_by_ens <- lapply(enseignes_counts, safe_moran, listw = W_dist)
+
+    indices_concentration <- data.frame(
+      segment = c("TOTAL", names(entropy_by_ens)),
+      entropie_relative = c(total_entropy, as.numeric(entropy_by_ens)),
+      moran_I = c(total_moran$I, sapply(moran_by_ens, function(x) x$I)),
+      moran_p_value = c(total_moran$p_value, sapply(moran_by_ens, function(x) x$p_value))
+    )
+  }
+
+  indices_concentration <- indices_concentration %>%
+    dplyr::mutate(
+      entropie_relative = round(entropie_relative, 4),
+      moran_I = round(moran_I, 4),
+      moran_p_value = round(moran_p_value, 4)
+    )
+
+  print(knitr::kable(
+    indices_concentration,
+    caption = "Indices de concentration spatiale sur la zone Grenoble + Nord (2025)"
+  ))
+}
+```
+
+## 7.3 Test de Moran sur les residus OLS
+
+```{r}
+if (!spdep_ok || is.null(W_rook) || is.null(W_dist) || is.null(W_knn)) {
+  info_tbl <- data.frame(
+    etat = "Tests OLS spatiaux non executes",
+    raison = "Matrice(s) de voisinage indisponible(s)."
+  )
+  print(knitr::kable(info_tbl, caption = "Etat de la Partie 7.3"))
+} else {
+  predictors_candidates <- c(
+    "Pct_actifs",
+    "Pct_Menages_enfants",
+    "Pct_Menages_voiture",
+    "Pct_Cadres_sup",
+    "Mediane_euro",
+    "Densite_pop"
+  )
+
+  predictors_ok <- predictors_candidates[predictors_candidates %in% names(iris_zone_etude)]
+  predictors_ok <- predictors_ok[sapply(predictors_ok, function(v) {
+    vv <- suppressWarnings(as.numeric(iris_zone_etude[[v]]))
+    sum(is.finite(vv)) >= 5 && stats::var(vv[is.finite(vv)]) > 0
+  })]
+
+  if (length(predictors_ok) < 1) {
+    moran_ols_tbl <- data.frame(
+      voisinage = "NA",
+      moran_I = NA_real_,
+      p_value = NA_real_,
+      note = "Aucun predicteur valide pour OLS"
+    )
+    print(knitr::kable(
+      moran_ols_tbl,
+      caption = "Test de Moran sur residus OLS (variable cible: points accessibles en zone primaire)"
+    ))
+  } else {
+    model_df <- iris_zone_etude %>%
+      sf::st_drop_geometry() %>%
+      dplyr::transmute(
+        y = as.numeric(Nb_pdv_access_primaire_voiture),
+        dplyr::across(dplyr::all_of(predictors_ok), ~ suppressWarnings(as.numeric(.x)))
+      )
+
+    complete_idx <- stats::complete.cases(model_df)
+    model_cc <- model_df[complete_idx, , drop = FALSE]
+
+    if (nrow(model_cc) < 8 || stats::var(model_cc$y) == 0) {
+      moran_ols_tbl <- data.frame(
+        voisinage = "NA",
+        moran_I = NA_real_,
+        p_value = NA_real_,
+        note = "Donnees insuffisantes apres filtrage complet"
+      )
+      print(knitr::kable(
+        moran_ols_tbl,
+        caption = "Test de Moran sur residus OLS (variable cible: points accessibles en zone primaire)"
+      ))
+    } else {
+      ols_formula <- stats::as.formula(paste("y ~", paste(predictors_ok, collapse = " + ")))
+      ols_mod <- stats::lm(ols_formula, data = model_cc)
+
+      W_rook_cc <- spdep::subset.listw(W_rook, subset = complete_idx, zero.policy = TRUE)
+      W_dist_cc <- spdep::subset.listw(W_dist, subset = complete_idx, zero.policy = TRUE)
+      W_knn_cc <- spdep::subset.listw(W_knn, subset = complete_idx, zero.policy = TRUE)
+
+      moran_lm_safe <- function(mod, lw) {
+        out <- tryCatch(
+          spdep::lm.morantest(mod, lw, alternative = "two.sided", zero.policy = TRUE),
+          error = function(e) NULL
+        )
+        if (is.null(out)) c(I = NA_real_, p = NA_real_) else c(
+          I = as.numeric(out$estimate[["Observed Moran I"]]),
+          p = as.numeric(out$p.value)
+        )
+      }
+
+      t_rook <- moran_lm_safe(ols_mod, W_rook_cc)
+      t_dist <- moran_lm_safe(ols_mod, W_dist_cc)
+      t_knn <- moran_lm_safe(ols_mod, W_knn_cc)
+
+      moran_ols_tbl <- data.frame(
+        voisinage = c("Rook", "Distance", "KNN"),
+        moran_I = c(t_rook["I"], t_dist["I"], t_knn["I"]),
+        p_value = c(t_rook["p"], t_dist["p"], t_knn["p"])
+      ) %>%
+        dplyr::mutate(
+          moran_I = round(moran_I, 4),
+          p_value = round(p_value, 4)
+        )
+
+      print(knitr::kable(
+        moran_ols_tbl,
+        caption = "Test de Moran sur residus OLS (variable cible: points accessibles en zone primaire)"
+      ))
+
+      iris_res <- iris_zone_etude
+      iris_res$ols_res <- NA_real_
+      iris_res$ols_res[complete_idx] <- stats::resid(ols_mod)
+
+      ggplot() +
+        geom_sf(data = iris_res, aes(fill = ols_res), color = "white", linewidth = 0.25) +
+        scale_fill_gradient2(
+          low = "#2C7BB6",
+          mid = "white",
+          high = "#D7191C",
+          midpoint = 0,
+          na.value = "grey90",
+          name = "Residus OLS"
+        ) +
+        labs(
+          title = "Carte des residus OLS (accessibilite primaire)",
+          subtitle = "Detection visuelle de structure spatiale residuelle"
+        ) +
+        theme_minimal()
+    }
+  }
+}
+```
+
+## 7.4 Specification et estimation SAR/SEM
+
+```{r}
+if (!spdep_ok || !exists("model_cc") || !exists("ols_mod") || !exists("W_rook_cc")) {
+  info_tbl <- data.frame(
+    etat = "Modeles SAR/SEM non estimes",
+    raison = "Prerequis indisponibles (spdep ou modele OLS non construit)."
+  )
+  print(knitr::kable(info_tbl, caption = "Etat de la Partie 7.4"))
+} else {
+  lm_tests_obj <- tryCatch({
+    if ("lm.LMtests" %in% getNamespaceExports("spdep")) {
+      spdep::lm.LMtests(ols_mod, W_rook_cc, test = c("RLMerr", "RLMlag"), zero.policy = TRUE)
+    } else if ("lm.RStests" %in% getNamespaceExports("spdep")) {
+      spdep::lm.RStests(ols_mod, W_rook_cc, test = c("adjRSerr", "adjRSlag"), zero.policy = TRUE)
+    } else {
+      NULL
+    }
+  }, error = function(e) NULL)
+
+  get_test_stat <- function(obj, nm) {
+    if (is.null(obj) || is.null(obj[[nm]])) return(c(stat = NA_real_, p = NA_real_))
+    c(
+      stat = as.numeric(obj[[nm]]$statistic[[1]]),
+      p = as.numeric(obj[[nm]]$p.value)
+    )
+  }
+
+  rlm_err <- get_test_stat(lm_tests_obj, "RLMerr")
+  rlm_lag <- get_test_stat(lm_tests_obj, "RLMlag")
+  if (all(is.na(rlm_err))) rlm_err <- get_test_stat(lm_tests_obj, "adjRSerr")
+  if (all(is.na(rlm_lag))) rlm_lag <- get_test_stat(lm_tests_obj, "adjRSlag")
+
+  tests_tbl <- data.frame(
+    test = c("Robust LM Error", "Robust LM Lag"),
+    statistic = round(c(rlm_err["stat"], rlm_lag["stat"]), 4),
+    p_value = round(c(rlm_err["p"], rlm_lag["p"]), 4)
+  )
+  print(knitr::kable(tests_tbl, caption = "Tests robustes de specification spatiale (Rook)"))
+
+  if (spatialreg_ok) {
+    sar_mod <- tryCatch(
+      spatialreg::lagsarlm(formula(ols_mod), data = model_cc, listw = W_rook_cc, zero.policy = TRUE),
+      error = function(e) NULL
+    )
+
+    sem_mod <- tryCatch(
+      spatialreg::errorsarlm(formula(ols_mod), data = model_cc, listw = W_rook_cc, zero.policy = TRUE),
+      error = function(e) NULL
+    )
+
+    synth_mod <- data.frame(
+      modele = c("OLS", "SAR", "SEM"),
+      AIC = c(
+        tryCatch(AIC(ols_mod), error = function(e) NA_real_),
+        tryCatch(AIC(sar_mod), error = function(e) NA_real_),
+        tryCatch(AIC(sem_mod), error = function(e) NA_real_)
+      ),
+      param_spatial = c(
+        NA_real_,
+        if (!is.null(sar_mod)) as.numeric(sar_mod$rho) else NA_real_,
+        if (!is.null(sem_mod)) as.numeric(sem_mod$lambda) else NA_real_
+      ),
+      note = c(
+        "",
+        if (!is.null(sar_mod)) "" else "SAR non convergent",
+        if (!is.null(sem_mod)) "" else "SEM non convergent"
+      )
+    ) %>%
+      dplyr::mutate(
+        AIC = round(AIC, 2),
+        param_spatial = round(param_spatial, 4)
+      )
+  } else {
+    synth_mod <- data.frame(
+      modele = c("OLS", "SAR", "SEM"),
+      AIC = c(round(tryCatch(AIC(ols_mod), error = function(e) NA_real_), 2), NA_real_, NA_real_),
+      param_spatial = c(NA_real_, NA_real_, NA_real_),
+      note = c(
+        "",
+        "Package spatialreg absent",
+        "Package spatialreg absent"
+      )
+    )
+  }
+
+  print(knitr::kable(
+    synth_mod,
+    caption = "Comparaison OLS/SAR/SEM (AIC et parametre spatial)"
+  ))
+}
 ```
 
