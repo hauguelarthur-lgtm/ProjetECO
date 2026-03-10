@@ -1,0 +1,4 @@
+source_id,n_rows,n_cols,n_geom_empty,crs_epsg,n_active,n_zone_active,n_4711,n_4711_active,n_4711_zone_active,n_enseigne1_non_na,n_brand_known,n_enseigne_unknown,n_enseigne_unique
+raw_dataseed_sirene_2,342,112,5,4326,211,32,342,211,32,207,209,133,47
+raw_dataseed_sirene_1,239,112,9,4326,239,37,239,239,37,165,166,73,35
+actif_dataseed_sirene_1,239,112,9,4326,239,37,239,239,37,165,166,73,35

@@ -1,0 +1,61 @@
+enseigne_display,n,source_id,scope
+ENSEIGNE_INCONNUE,133,raw_dataseed_sirene_2,all
+CARREFOUR MARKET,29,raw_dataseed_sirene_2,all
+LIDL,21,raw_dataseed_sirene_2,all
+CARREFOUR EXPRESS,20,raw_dataseed_sirene_2,all
+INTERMARCHE,16,raw_dataseed_sirene_2,all
+CARREFOUR CONTACT,15,raw_dataseed_sirene_2,all
+ALDI MARCHE,12,raw_dataseed_sirene_2,all
+CARREFOUR CITY,11,raw_dataseed_sirene_2,all
+CARREFOUR,8,raw_dataseed_sirene_2,all
+NETTO,8,raw_dataseed_sirene_2,all
+DIA,6,raw_dataseed_sirene_2,all
+AUCHAN SUPERMARCHE,5,raw_dataseed_sirene_2,all
+CARREFOUR MONTAGNE,5,raw_dataseed_sirene_2,all
+LEADER PRICE,4,raw_dataseed_sirene_2,all
+MARCHE PLUS,4,raw_dataseed_sirene_2,all
+MARKET,4,raw_dataseed_sirene_2,all
+CONTACT MARCHE,3,raw_dataseed_sirene_2,all
+COLRUYT,2,raw_dataseed_sirene_2,all
+COLRUYT PRIX-QUALITE,2,raw_dataseed_sirene_2,all
+LEADER PRICE EXPRESS,2,raw_dataseed_sirene_2,all
+ENSEIGNE_INCONNUE,73,raw_dataseed_sirene_1,all
+CARREFOUR MARKET,22,raw_dataseed_sirene_1,all
+INTERMARCHE,22,raw_dataseed_sirene_1,all
+LIDL,21,raw_dataseed_sirene_1,all
+CARREFOUR CITY,20,raw_dataseed_sirene_1,all
+ALDI MARCHE,14,raw_dataseed_sirene_1,all
+CARREFOUR EXPRESS,12,raw_dataseed_sirene_1,all
+NETTO,7,raw_dataseed_sirene_1,all
+AUCHAN SUPERMARCHE,5,raw_dataseed_sirene_1,all
+CARREFOUR,5,raw_dataseed_sirene_1,all
+CARREFOUR CONTACT,5,raw_dataseed_sirene_1,all
+CARREFOUR MONTAGNE,4,raw_dataseed_sirene_1,all
+MARKET,3,raw_dataseed_sirene_1,all
+COLRUYT,2,raw_dataseed_sirene_1,all
+COLRUYT PRIX-QUALITE,2,raw_dataseed_sirene_1,all
+UTILE,2,raw_dataseed_sirene_1,all
+ACTIO,1,raw_dataseed_sirene_1,all
+ACTION,1,raw_dataseed_sirene_1,all
+BIOCOOP VOREPPE PORTE DE CHARTREUSE,1,raw_dataseed_sirene_1,all
+CITY,1,raw_dataseed_sirene_1,all
+ENSEIGNE_INCONNUE,73,actif_dataseed_sirene_1,all
+CARREFOUR MARKET,22,actif_dataseed_sirene_1,all
+INTERMARCHE,22,actif_dataseed_sirene_1,all
+LIDL,21,actif_dataseed_sirene_1,all
+CARREFOUR CITY,20,actif_dataseed_sirene_1,all
+ALDI MARCHE,14,actif_dataseed_sirene_1,all
+CARREFOUR EXPRESS,12,actif_dataseed_sirene_1,all
+NETTO,7,actif_dataseed_sirene_1,all
+AUCHAN SUPERMARCHE,5,actif_dataseed_sirene_1,all
+CARREFOUR,5,actif_dataseed_sirene_1,all
+CARREFOUR CONTACT,5,actif_dataseed_sirene_1,all
+CARREFOUR MONTAGNE,4,actif_dataseed_sirene_1,all
+MARKET,3,actif_dataseed_sirene_1,all
+COLRUYT,2,actif_dataseed_sirene_1,all
+COLRUYT PRIX-QUALITE,2,actif_dataseed_sirene_1,all
+UTILE,2,actif_dataseed_sirene_1,all
+ACTIO,1,actif_dataseed_sirene_1,all
+ACTION,1,actif_dataseed_sirene_1,all
+BIOCOOP VOREPPE PORTE DE CHARTREUSE,1,actif_dataseed_sirene_1,all
+CITY,1,actif_dataseed_sirene_1,all

@@ -10,13 +10,9 @@ lang: fr
 
 output: 
   flexdashboard::flex_dashboard:
-    orientation: columns
-    vertical_layout: fill
-    theme: flatly
-    toc: true
-    source_code: false
-    self_contained: true
-    embed-resources: true
+    orientation: rows
+    social: menu
+    source_code: embed
 
 execute:
   echo: false
@@ -36,7 +32,7 @@ library(knitr)
 library(kableExtra)
 library(stringr)
 library(ggplot2)
-library(flexdashboard)
+library(plotly)
 
 knitr::opts_chunk$set(
   echo = FALSE,
@@ -426,7 +422,11 @@ if (!dir.exists(processed_dir)) {
 message("Dossier Cours utilise: ", cours_dir)
 ```
 
-# PARTIE 1: Vue d'ensemble de la zone d’étude: Grenoble + communes Nord
+PARTIE 1.1: Vue d'ensemble de la zone d’étude: Grenoble + communes Nord
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
 
 ```{r,results='hide'}
 # ---------------------------
@@ -568,7 +568,7 @@ message(
 ```
 
 
-## Répartition des établissements dans la zone d'étude
+### Répartition des établissements dans la zone d'étude
 ```{r}
 
 # Création d'un tableau récapitulatif des types d'établissements
@@ -610,7 +610,7 @@ sirene_zone_etude <- sirene_zone_etude %>%
 ```
 
 
-## Création de la table des ponctuels
+### Nombre de points de vente par enseigne
 
 ```{r}
 # ---------------------------
@@ -643,6 +643,13 @@ afficher(table(tab_ponctuels$Nom_usuel), colname= "Enseigne de l'établissement"
 
 ```
 
+PARTIE 1.2: Table des ponctuels
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+### Table des ponctuels
 
 
 ```{r}
@@ -691,7 +698,13 @@ message("CSV des points de vente exporté dans : ", csv_file)
 ```
 
 
-# PARTIE 2 : Dictionnaire des variables
+PARTIE 1.2: Dictionnaire des variables
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+### Dictionnaire des variables
 
 ```{r}
 dico_donnees <- data.frame(
@@ -745,9 +758,13 @@ write.csv(dico_donnees,
 kable(dico_donnees, caption="Dictionnaire des variables")
 ```
 
-# PARTIE 3 : Zones de chalandise (cadre methodologique)
+PARTIE 2.1 : Zones de chalandise (cadre methodologique)
+=======================================================================
 
-## 1) Hypermarché
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+### Hypermarché
 
 Isochrones
 
@@ -763,7 +780,15 @@ Justification
 
 La pratique decisionnelle en distribution alimentaire retient classiquement des zones isochrones voiture de 20 et 30 minutes pour les hypermarches, car ils sont des magasins "destination": les consommateurs acceptent un temps de deplacement plus long du fait de l'attractivite et du panier moyen plus eleve. A Grenoble, l'usage des isochrones (temps) est plus pertinent que la distance, car la congestion et la structure urbaine rendent les kilometres moins comparables. En complement, lorsque l'hypermarche est connecte au reseau de transports en commun, un seuil 30-45 minutes porte-a-porte permet de capter une chalandise urbaine realiste en integrant la marche d'acces (repere local 8-10 min).
 
-## 2) Supermarché / discount
+
+PARTIE 2.2 : Zones de chalandise (cadre methodologique)
+=======================================================================
+
+Row {data-height=1000}
+----------------------------------------------------------------------------------------------------------------------------------------------
+
+
+### Supermarché / discount
 
 Isochrones
 
@@ -785,7 +810,14 @@ Justification
 
 Pour les supermarches/discount, la reference la plus defendable est l'usage d'isochrones voiture 10-15 minutes observe dans les analyses de concurrence en distribution alimentaire. A Grenoble, ces temps doivent etre privilegies aux distances, car la circulation et les contraintes urbaines font varier fortement les km reellement parcourus pour un meme temps. En intra-urbain, la chalandise d'un supermarche peut etre completee par des isochrones velo (10-15 min) et pieton (5-10 min) selon le positionnement. Enfin, si l'accessibilite TC est facile, un seuil 20-30 min porte-a-porte capture la zone atteignable.
 
-## 3) Proximité urbaine (supérette, Carrefour City, Monoprix, etc.)
+
+PARTIE 2.3 : Zones de chalandise (cadre methodologique)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+### Proximité urbaine (supérette, Carrefour City, Monoprix, etc.)
 
 Isochrones
 
@@ -806,7 +838,13 @@ Justification
 
 Le commerce de proximite repond a une logique d'achats d'appoint et d'immediatete d'acces: la concurrence se joue principalement sur un perimetre local. Dans un contexte intra-Grenoble, l'approche pertinente est donc d'abord pietonne (5-10 min), puis velo (10-15 min). Pour les clients captes via les axes de tram/bus, l'isochrone est raisonnee en temps porte-a-porte, avec un repere local d'accessibilite de 8-10 min a pied autour des arrets/gares. La voiture peut etre ajoutee en tertiaire, mais en centre-ville son pouvoir explicatif est inferieur.
 
-## 4) Drive
+PARTIE 2.4 : Zones de chalandise (cadre methodologique)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+### Drive
 
 Isochrones
 
@@ -822,13 +860,21 @@ Justification
 
 Le drive est gouverne par un critere cle: la praticite. Les analyses professionnelles retiennent souvent une zone drive autour d'environ 15 minutes en voiture, car le retrait doit rester "sur trajet". A Grenoble, l'usage du temps est adapte a la congestion. Lorsque le drive prend la forme d'un click&collect urbain, des isochrones courtes pieton/velo sont pertinentes; pour un drive classique en peripherie, la voiture reste le mode principal.
 
+PARTIE 2.1 : Zones de chalandise (cadre methodologique)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
 ### Parametrage retenu dans ce notebook (Partie 6)
 
 - Hypermarche: voiture 20-30 min; acces pieton reseau 8-10 min
 - Supermarche: voiture 10-15 min; pieton 5-10 min
 - Superette: pieton 5-10 min; voiture 5-10 min (usage tertiaire)
 
-## References bibliographiques
+
+
+### References bibliographiques
 
 1. [Autorité de la concurrence (2025), Décision n° 24-DCC-288](https://www.autoritedelaconcurrence.fr/sites/default/files/integral_texts/2025-02/24-033%20-%20Publique%20-%20d%C3%A9cision%2024DCC288%20vf%20%2B%20Engagements.pdf)
 2. [Autorité de la concurrence, La grande distribution à dominante alimentaire](https://www.autoritedelaconcurrence.fr/sites/default/files/doss_presse_10a26.pdf)
@@ -840,7 +886,11 @@ Le drive est gouverne par un critere cle: la praticite. Les analyses professionn
 8. [S-PASS TSE (2022), Les drives : Mission Bassin Minier](https://cdn.s-pass.org/SPASSDATA/attachments/2022_09/28/62863-les-drives-mission-bassin-minier.pdf)
 9. [Grenoble Mag (2025), Congestion et vitesse moyenne](https://www.grenoblemag.com/article/2529/grenoble-12e-ville-francaise-la-plus-congestionnee-81-heures-perdues-dans-les-bouchons-en-2025)
 
-# PARTIE 4: Cartographie des caractéristiques socioéconomiques et démographiques
+
+PARTIE 3.1: Cartographie du premier quartile et du revenu median
+=======================================================================
+
+
 
 ```{r}
 colnames(iris_zone_etude)[20] <- "Code_IRIS"
@@ -934,33 +984,38 @@ tmap_mode("view")
 
 # Fonction pour créer une carte avec id et popup
 creer_carte <- function(sf_polygones, sf_points, var_poly, titre, palette="Blues") {
-  sf_points_plot <- separate_overlapping_points(sf_points, offset_m = 22)
-  tm_shape(sf_polygones) +
   
-  tm_text(text = "iris_name", size=0.8) +
-  tm_polygons(
-    col = var_poly,
-    palette = palette,
-    style = "quantile",
-    alpha = 0.6,
-    title = titre,
-    id = "iris_name",           # affichage du nom IRIS au survol
-    popup.vars = var_poly       # valeur de la variable dans le popup
-  ) +
-  tm_shape(sf_points_plot) +
-  tm_symbols(
-    fill = "Enseigne",
-    fill.legend = tm_legend(title = "Enseigne"),
-    shape = "Type_PV",
-    shape.scale = tm_scale_categorical(values = c(super = 21, hyper = 24, superette = 22)),
-    shape.legend = tm_legend(title = "Type point de vente"),
-    col = "grey20",
-    lwd = 0.4,
-    size = 0.5,
-    id = "siren",
-    popup.vars = c("Enseigne", "Classe", "Type_PV")
-  ) +
-  tm_layout(title = titre, legend.outside = TRUE)
+  # Séparation des points si nécessaire
+  sf_points_plot <- separate_overlapping_points(sf_points, offset_m = 22)
+  
+  # Construire la carte tmap
+  carte <- tm_shape(sf_polygones) +
+    tm_text(text = "iris_name", size=0.8) +
+    tm_polygons(
+      col = var_poly,
+      palette = palette,
+      style = "quantile",
+      alpha = 0.6,
+      title = titre,
+      id = "iris_name",
+      popup.vars = var_poly
+    ) +
+    tm_shape(sf_points_plot) +
+    tm_symbols(
+      fill = "Enseigne",
+      fill.legend = tm_legend(title = "Enseigne"),
+      shape = "Type_PV",
+      shape.scale = tm_scale_categorical(values = c(super = 21, hyper = 24, superette = 22)),
+      shape.legend = tm_legend(title = "Type point de vente"),
+      col = "grey20",
+      lwd = 0.4,
+      size = 0.5,
+      id = "siren",
+      popup.vars = c("Enseigne", "Classe", "Type_PV")
+    ) +
+    tm_layout(title = titre, legend.outside = TRUE)
+  
+  return(carte)
 }
 
 plot_concurrence_map <- function(sirene_sf, title_txt) {
@@ -987,6 +1042,10 @@ plot_concurrence_map <- function(sirene_sf, title_txt) {
 }
 
 
+```
+
+```{r}
+# Création des cartes
 # Cartes des revenus
 map_1er_quartile <- creer_carte(iris_zone_etude, sirene_zone_etude, 
                                 "1er_quartile_euro", "1er quartile du revenu (€)", "Blues")
@@ -1013,61 +1072,91 @@ map_cadres <- creer_carte(iris_zone_etude, sirene_zone_etude,
 
 map_densite <- creer_carte(iris_zone_etude, sirene_zone_etude,
                            "Densite_pop", "Densité de population (hab/km²)", "Reds")
-
 ```
 
-## Carte du premier quartile du revenu
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+
+### Carte du premier quartile du revenu
 
 ```{r}
 map_1er_quartile
 ```
 
-## Carte du revenu median
+
+
+### Carte du revenu median
 
 ```{r}
 map_mediane
 ```
 
-## Carte du troisieme quartile du revenu
+
+PARTIE 3.2: Cartographie du troisième quartile du revenu et du pourcentage d'actifs parmi les 15–64 ans
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+### Carte du troisième quartile du revenu
 
 ```{r}
 map_3e_quartile
 ```
 
 
-## Carte du pourcentage d'actifs parmi les 15–64 ans
+
+### Carte du pourcentage d'actifs parmi les 15–64 ans
 
 ```{r}
 map_actifs
 ```
 
+PARTIE 3.3: Cartographie des parts de ménages avec enfants/ avec voiture
+=======================================================================
 
-## Carte de la part de ménages avec enfants
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+### Carte de la part de ménages avec enfants
 
 ```{r}
 map_menages_enfants
 ```
 
-## Carte de la part de ménages avec voiture
+
+### Carte de la part de ménages avec voiture
 
 ```{r}
 map_menages_voiture
 ```
 
-## Carte de la part de cadres supérieurs
+PARTIE 3.4: Cartographie de la part de cadres supérieurs et de la densité de la population
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+### Carte de la part de cadres supérieurs
 
 ```{r}
 map_cadres
 ```
 
-## Carte de la densité de la population
+
+
+### Carte de la densité de la population
 
 ```{r}
 map_densite
 ```
 
 
-# PARTIE 5: Analyse de la concurrence
+PARTIE 4: Analyse de la concurrence
+=======================================================================
+
 
 ```{r,results='hide'}
 library(opentripplanner)
@@ -1234,7 +1323,7 @@ iris_zone_etude <- iris_zone_etude %>%
 
 ```
 
-## Cartographie des Points de vente avant et en 2025
+
 
 ```{r}
 # Carte 2020
@@ -1248,29 +1337,29 @@ map_2025 <- plot_concurrence_map(
   sirene_zone_etude,
   "Concurrence super/hyper - 2025 (dataseed-sirene-1)"
 )
-
-knitr::kable(
-  sirene_zone_etude %>%
-    st_drop_geometry() %>%
-    count(Type_PV, name = "nb_etablissements") %>%
-    arrange(match(Type_PV, c("hyper", "super", "superette"))),
-  caption = "Controle 2025 - etablissements conserves apres filtre NAF"
-)
-
 ```
 
-## Carte 2020
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+### Cartographie des Points de vente en 2020
 
 ```{r}
 map_avant
 ```
 
-## Carte 2025
+
+### Cartographie des Points de vente en 2025
+
 ```{r}
 map_2025
 ```
 
-# PARTIE 6: Zones de chalandises en 2025
+PARTIE 5: Zones de chalandises en 2025
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
 
 ```{r,results='hide'}
 if (!is.null(otpcon) && !is.na(otp_port)) {
@@ -1303,7 +1392,7 @@ iso <- iso %>%
 iso$minutes <- iso$time / 60
 
 ```
-## Zones de chalandise (à pied)
+### Zones de chalandise (à pied)
 
 ```{r}
 tm_shape(iris_zone_etude) +
@@ -1367,7 +1456,7 @@ tm_shape(iris_zone_etude) +
 ```
 
 
-## Zones de chalandise (en voiture)
+### Zones de chalandise (en voiture)
 
 ```{r}
 if (!is.null(otpcon) && !is.na(otp_port)) {
@@ -1428,10 +1517,10 @@ tm_shape(iris_zone_etude) +
   tm_shape(iso_car) +
   tm_fill(
     "minutes",
-    breaks = c(0, 5.01, 10.01, 15.01, 20.01, 30.01),
+    breaks = c(0, 5.01, 10.01, 15.01, 20.01),
     title = "Isochrones voiture (minutes)",
     style = "fixed",
-    labels = c("0 à 5", "5 à 10", "10 à 15", "15 à 20", "20 à 30"),
+    labels = c("0 à 5", "5 à 10", "10 à 15", "15 à 20"),
     palette = "Oranges",
     id = "minutes",
     alpha = 0.3
@@ -1454,6 +1543,7 @@ tm_shape(iris_zone_etude) +
 
 ```
 
+
 ```{r}
 iso10_car <- iso_primary_car
 
@@ -1470,6 +1560,17 @@ iris_zone_etude$Nb_pdv_access_primaire_voiture <- rowSums(
 )
 
 ```
+
+
+
+
+PARTIE 6: Accessibilité et Couverture
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+### Accessibilité IRIS
 
 ```{r}
 tm_shape(iris_zone_etude) +
@@ -1525,15 +1626,23 @@ write.csv(data_temp2, file.path(processed_dir, "nb_pdv_iris_iso_primaire_hierarc
 
 
 ```{r}
+# Désactiver s2 pour plus de tolérance
+sf::sf_use_s2(FALSE)
+
 if (nrow(iso_primary_car) == 0) {
   intersect_pct <- iris_zone_etude %>%
     st_drop_geometry() %>%
     dplyr::transmute(iris_name, intersect_area = 0)
 } else {
-  # Union des isochrones primaires pour eviter le double comptage des recouvrements.
+  # Nettoyage des géométries pour éviter TopologyException
+  iso_primary_car <- st_make_valid(iso_primary_car)
+  iso_primary_car <- st_buffer(iso_primary_car, 0)  # corrige les géométries invalides
+
+  # Union
   iso_primary_union <- st_union(st_geometry(iso_primary_car))
   iso_primary_union <- st_sf(id = 1, geometry = st_sfc(iso_primary_union, crs = st_crs(iso_primary_car)))
 
+  # Intersection
   intersect_pct <- st_intersection(
     iris_zone_etude %>% dplyr::select(iris_name),
     iso_primary_union
@@ -1543,10 +1652,13 @@ if (nrow(iso_primary_car) == 0) {
     dplyr::group_by(iris_name) %>%
     dplyr::summarise(intersect_area = sum(intersect_area), .groups = "drop")
 }
+
+# Optionnel : remettre S2
+sf::sf_use_s2(TRUE)
 ```
 
 
-## Couverture des IRIS
+### Couverture des IRIS
 
 ```{r}
 iris_zone_etude <- mutate(iris_zone_etude, iris_area = st_area(iris_zone_etude))
@@ -1583,19 +1695,19 @@ tm_shape(iris_zone_etude) +
   tm_layout(title = "Couverture des IRIS (zone primaire hierarchisee hyper>super>superette)", legend.outside = TRUE)
 ```
 
-# PARTIE 7: Autocorrelation spatiale et econometrie spatiale (application Grenoble + Nord)
+PARTIE 7: Autocorrelation spatiale
+=======================================================================
 
-## 7.1 Construction des voisinages spatiaux
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+
+### Voisins spatiaux
 
 ```{r}
 spdep_ok <- requireNamespace("spdep", quietly = TRUE)
 spatialreg_ok <- requireNamespace("spatialreg", quietly = TRUE)
 
-pkg_status <- data.frame(
-  package = c("spdep", "spatialreg"),
-  disponible = c(spdep_ok, spatialreg_ok)
-)
-print(knitr::kable(pkg_status, caption = "Disponibilite des packages spatiaux"))
 
 nb_rook <- NULL
 nb_knn <- NULL
@@ -1609,7 +1721,7 @@ if (!spdep_ok) {
     etat = "Analyse de voisinage non executee",
     raison = "Le package spdep est absent. Installer spdep pour activer la Partie 7."
   )
-  print(knitr::kable(info_tbl, caption = "Etat de la Partie 7.1"))
+  kable(info_tbl, caption = "Etat de la Partie 7.1")
 } else {
   iris_spatial <- iris_zone_etude %>%
     sf::st_make_valid() %>%
@@ -1648,7 +1760,7 @@ if (!spdep_ok) {
     nb_liens = c(sum(spdep::card(nb_rook)), sum(spdep::card(nb_knn)), sum(spdep::card(nb_dist))),
     nb_iris_sans_voisin = c(sum(spdep::card(nb_rook) == 0), sum(spdep::card(nb_knn) == 0), sum(spdep::card(nb_dist) == 0))
   )
-  print(knitr::kable(voisinage_resume, caption = "Resume des structures de voisinage"))
+  kable(voisinage_resume, caption = "Resume des structures de voisinage")
 
   voisins_rook_sf <- sf::st_as_sf(spdep::nb2lines(nb_rook, coords = coords))
   sf::st_crs(voisins_rook_sf) <- sf::st_crs(iris_centroids)
@@ -1665,7 +1777,7 @@ if (!spdep_ok) {
 }
 ```
 
-## 7.2 Indices de concentration spatiale (entropie + Moran)
+### Indices de concentration spatiale
 
 ```{r}
 if (!spdep_ok || is.null(W_dist)) {
@@ -1673,7 +1785,7 @@ if (!spdep_ok || is.null(W_dist)) {
     etat = "Indices non calcules",
     raison = "Les objets de voisinage ne sont pas disponibles."
   )
-  print(knitr::kable(info_tbl, caption = "Etat de la Partie 7.2"))
+  kable(info_tbl, caption = "Etat de la Partie 7.2")
 } else {
   entropy_relative <- function(x) {
     x <- as.numeric(x)
@@ -1740,134 +1852,136 @@ if (!spdep_ok || is.null(W_dist)) {
       moran_p_value = round(moran_p_value, 4)
     )
 
-  print(knitr::kable(
+  kable(
     indices_concentration,
-    caption = "Indices de concentration spatiale sur la zone Grenoble + Nord (2025)"
-  ))
+    caption = "Indices de concentration spatiale"
+  )
 }
 ```
 
-## 7.3 Test de Moran sur les residus OLS
+PARTIE 8: Carte des résidus OLS et Tests
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+### Test de Moran
 
 ```{r}
-if (!spdep_ok || is.null(W_rook) || is.null(W_dist) || is.null(W_knn)) {
-  info_tbl <- data.frame(
-    etat = "Tests OLS spatiaux non executes",
-    raison = "Matrice(s) de voisinage indisponible(s)."
+
+predictors_candidates <- c(
+  "Pct_actifs",
+  "Pct_Menages_enfants",
+  "Pct_Menages_voiture",
+  "Pct_Cadres_sup",
+  "Mediane_euro",
+  "Densite_pop"
+)
+
+predictors_ok <- predictors_candidates[predictors_candidates %in% names(iris_zone_etude)]
+predictors_ok <- predictors_ok[sapply(predictors_ok, function(v) {
+  vv <- suppressWarnings(as.numeric(iris_zone_etude[[v]]))
+  sum(is.finite(vv)) >= 5 && stats::var(vv[is.finite(vv)]) > 0
+})]
+
+
+if (length(predictors_ok) < 1) {
+  moran_ols_tbl <- data.frame(
+    voisinage = "NA",
+    moran_I = NA_real_,
+    p_value = NA_real_,
+    note = "Aucun predicteur valide pour OLS"
   )
-  print(knitr::kable(info_tbl, caption = "Etat de la Partie 7.3"))
+  kable(
+    moran_ols_tbl,
+    caption = "Test de Moran sur residus OLS (variable cible: points accessibles en zone primaire)"
+  )
 } else {
-  predictors_candidates <- c(
-    "Pct_actifs",
-    "Pct_Menages_enfants",
-    "Pct_Menages_voiture",
-    "Pct_Cadres_sup",
-    "Mediane_euro",
-    "Densite_pop"
-  )
+  model_df <- iris_zone_etude %>%
+    sf::st_drop_geometry() %>%
+    dplyr::transmute(
+      y = as.numeric(Nb_pdv_access_primaire_voiture),
+      dplyr::across(dplyr::all_of(predictors_ok), ~ suppressWarnings(as.numeric(.x)))
+    )
 
-  predictors_ok <- predictors_candidates[predictors_candidates %in% names(iris_zone_etude)]
-  predictors_ok <- predictors_ok[sapply(predictors_ok, function(v) {
-    vv <- suppressWarnings(as.numeric(iris_zone_etude[[v]]))
-    sum(is.finite(vv)) >= 5 && stats::var(vv[is.finite(vv)]) > 0
-  })]
+  complete_idx <- stats::complete.cases(model_df)
+  model_cc <- model_df[complete_idx, , drop = FALSE]
 
-  if (length(predictors_ok) < 1) {
+  if (nrow(model_cc) < 8 || stats::var(model_cc$y) == 0) {
     moran_ols_tbl <- data.frame(
       voisinage = "NA",
       moran_I = NA_real_,
       p_value = NA_real_,
-      note = "Aucun predicteur valide pour OLS"
+      note = "Donnees insuffisantes apres filtrage complet"
     )
-    print(knitr::kable(
+    kable(
       moran_ols_tbl,
       caption = "Test de Moran sur residus OLS (variable cible: points accessibles en zone primaire)"
-    ))
+    )
   } else {
-    model_df <- iris_zone_etude %>%
-      sf::st_drop_geometry() %>%
-      dplyr::transmute(
-        y = as.numeric(Nb_pdv_access_primaire_voiture),
-        dplyr::across(dplyr::all_of(predictors_ok), ~ suppressWarnings(as.numeric(.x)))
+    ols_formula <- stats::as.formula(paste("y ~", paste(predictors_ok, collapse = " + ")))
+    ols_mod <- stats::lm(ols_formula, data = model_cc)
+
+    W_rook_cc <- spdep::subset.listw(W_rook, subset = complete_idx, zero.policy = TRUE)
+    W_dist_cc <- spdep::subset.listw(W_dist, subset = complete_idx, zero.policy = TRUE)
+    W_knn_cc <- spdep::subset.listw(W_knn, subset = complete_idx, zero.policy = TRUE)
+
+    moran_lm_safe <- function(mod, lw) {
+      out <- tryCatch(
+        spdep::lm.morantest(mod, lw, alternative = "two.sided", zero.policy = TRUE),
+        error = function(e) NULL
       )
-
-    complete_idx <- stats::complete.cases(model_df)
-    model_cc <- model_df[complete_idx, , drop = FALSE]
-
-    if (nrow(model_cc) < 8 || stats::var(model_cc$y) == 0) {
-      moran_ols_tbl <- data.frame(
-        voisinage = "NA",
-        moran_I = NA_real_,
-        p_value = NA_real_,
-        note = "Donnees insuffisantes apres filtrage complet"
+      if (is.null(out)) c(I = NA_real_, p = NA_real_) else c(
+        I = as.numeric(out$estimate[["Observed Moran I"]]),
+        p = as.numeric(out$p.value)
       )
-      print(knitr::kable(
-        moran_ols_tbl,
-        caption = "Test de Moran sur residus OLS (variable cible: points accessibles en zone primaire)"
-      ))
-    } else {
-      ols_formula <- stats::as.formula(paste("y ~", paste(predictors_ok, collapse = " + ")))
-      ols_mod <- stats::lm(ols_formula, data = model_cc)
-
-      W_rook_cc <- spdep::subset.listw(W_rook, subset = complete_idx, zero.policy = TRUE)
-      W_dist_cc <- spdep::subset.listw(W_dist, subset = complete_idx, zero.policy = TRUE)
-      W_knn_cc <- spdep::subset.listw(W_knn, subset = complete_idx, zero.policy = TRUE)
-
-      moran_lm_safe <- function(mod, lw) {
-        out <- tryCatch(
-          spdep::lm.morantest(mod, lw, alternative = "two.sided", zero.policy = TRUE),
-          error = function(e) NULL
-        )
-        if (is.null(out)) c(I = NA_real_, p = NA_real_) else c(
-          I = as.numeric(out$estimate[["Observed Moran I"]]),
-          p = as.numeric(out$p.value)
-        )
-      }
-
-      t_rook <- moran_lm_safe(ols_mod, W_rook_cc)
-      t_dist <- moran_lm_safe(ols_mod, W_dist_cc)
-      t_knn <- moran_lm_safe(ols_mod, W_knn_cc)
-
-      moran_ols_tbl <- data.frame(
-        voisinage = c("Rook", "Distance", "KNN"),
-        moran_I = c(t_rook["I"], t_dist["I"], t_knn["I"]),
-        p_value = c(t_rook["p"], t_dist["p"], t_knn["p"])
-      ) %>%
-        dplyr::mutate(
-          moran_I = round(moran_I, 4),
-          p_value = round(p_value, 4)
-        )
-
-      print(knitr::kable(
-        moran_ols_tbl,
-        caption = "Test de Moran sur residus OLS (variable cible: points accessibles en zone primaire)"
-      ))
-
-      iris_res <- iris_zone_etude
-      iris_res$ols_res <- NA_real_
-      iris_res$ols_res[complete_idx] <- stats::resid(ols_mod)
-
-      ggplot() +
-        geom_sf(data = iris_res, aes(fill = ols_res), color = "white", linewidth = 0.25) +
-        scale_fill_gradient2(
-          low = "#2C7BB6",
-          mid = "white",
-          high = "#D7191C",
-          midpoint = 0,
-          na.value = "grey90",
-          name = "Residus OLS"
-        ) +
-        labs(
-          title = "Carte des residus OLS (accessibilite primaire)",
-          subtitle = "Detection visuelle de structure spatiale residuelle"
-        ) +
-        theme_minimal()
     }
+
+    t_rook <- moran_lm_safe(ols_mod, W_rook_cc)
+    t_dist <- moran_lm_safe(ols_mod, W_dist_cc)
+    t_knn <- moran_lm_safe(ols_mod, W_knn_cc)
+
+    moran_ols_tbl <- data.frame(
+      voisinage = c("Rook", "Distance", "KNN"),
+      moran_I = c(t_rook["I"], t_dist["I"], t_knn["I"]),
+      p_value = c(t_rook["p"], t_dist["p"], t_knn["p"])
+    ) %>%
+      dplyr::mutate(
+        moran_I = round(moran_I, 4),
+        p_value = round(p_value, 4)
+      )
+
+    kable(
+      moran_ols_tbl,
+      caption = "Test de Moran sur residus OLS (variable cible: points accessibles en zone primaire)"
+    )
+
+    iris_res <- iris_zone_etude
+    iris_res$ols_res <- NA_real_
+    iris_res$ols_res[complete_idx] <- stats::resid(ols_mod)
+
+    ggplot() +
+      geom_sf(data = iris_res, aes(fill = ols_res), color = "white", linewidth = 0.25) +
+      scale_fill_gradient2(
+        low = "#2C7BB6",
+        mid = "white",
+        high = "#D7191C",
+        midpoint = 0,
+        na.value = "grey90",
+        name = "Residus OLS"
+      ) +
+      labs(
+        title = "Carte des residus OLS (accessibilite primaire)",
+        subtitle = "Detection visuelle de structure spatiale residuelle"
+      ) +
+      theme_minimal()
   }
 }
+
 ```
 
-## 7.4 Specification et estimation SAR/SEM
+
+### Specification et estimation SAR/SEM
 
 ```{r}
 if (!spdep_ok || !exists("model_cc") || !exists("ols_mod") || !exists("W_rook_cc")) {
@@ -1875,7 +1989,7 @@ if (!spdep_ok || !exists("model_cc") || !exists("ols_mod") || !exists("W_rook_cc
     etat = "Modeles SAR/SEM non estimes",
     raison = "Prerequis indisponibles (spdep ou modele OLS non construit)."
   )
-  print(knitr::kable(info_tbl, caption = "Etat de la Partie 7.4"))
+  kable(info_tbl, caption = "Etat de la Partie 7.4")
 } else {
   lm_tests_obj <- tryCatch({
     if ("lm.LMtests" %in% getNamespaceExports("spdep")) {
@@ -1905,7 +2019,7 @@ if (!spdep_ok || !exists("model_cc") || !exists("ols_mod") || !exists("W_rook_cc
     statistic = round(c(rlm_err["stat"], rlm_lag["stat"]), 4),
     p_value = round(c(rlm_err["p"], rlm_lag["p"]), 4)
   )
-  print(knitr::kable(tests_tbl, caption = "Tests robustes de specification spatiale (Rook)"))
+  kable(tests_tbl, caption = "Tests robustes de specification spatiale (Rook)")
 
   if (spatialreg_ok) {
     sar_mod <- tryCatch(
@@ -1953,10 +2067,10 @@ if (!spdep_ok || !exists("model_cc") || !exists("ols_mod") || !exists("W_rook_cc
     )
   }
 
-  print(knitr::kable(
+  kable(
     synth_mod,
     caption = "Comparaison OLS/SAR/SEM (AIC et parametre spatial)"
-  ))
+  )
 }
 ```
 

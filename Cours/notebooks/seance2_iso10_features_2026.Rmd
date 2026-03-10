@@ -26,7 +26,7 @@ raw_dir <- file.path(cours_dir, "data", "raw")
 processed_dir <- file.path(cours_dir, "data", "processed")
 dir.create(processed_dir, recursive = TRUE, showWarnings = FALSE)
 message("Dossier Cours utilise: ", cours_dir)
-use_otp <- TRUE
+
 # Si TRUE, on stoppe le rendu quand aucun code 47.11* n'est trouve dans la zone.
 strict_supermarket_filter <- TRUE
 
@@ -52,6 +52,8 @@ if (otp_available) {
   message("opentripplanner indisponible: sections OTP/isochrones ignorees.")
 }
 ```
+
+
 ```{r}
 # Chargement des données locales (mêmes sources que test.Rmd)
 iris_shp <- st_read(
@@ -374,6 +376,8 @@ vars_to_keep <- c(
   "Actif_occ_15_ansplus_voiture_camion", "Actif_occ_15_ansplus_transport_commun"
 )
 ```
+
+
 ```{r}
 iris_grenoble <- merge(
   iris_grenoble,
@@ -478,7 +482,11 @@ tm_shape(iris_grenoble) +
   tm_layout(legend.outside = TRUE)
 ```
 
-```{r,results='hide',message=FALSE, eval=use_otp && otp_available}
+```{r,results='hide',message=FALSE, eval=otp_available}
+
+local_otp_jar <- file.path(cours_dir, "data", "otp-1.5.0-shaded.jar")
+path_otp <- if (file.exists(local_otp_jar)) local_otp_jar else otp_dl_jar()
+  
 if (!exists("otpcon")) {
   path_data <- file.path(cours_dir, "data")
   graph_dir <- file.path(path_data, "graphs", "default")
@@ -493,11 +501,14 @@ if (!exists("otpcon")) {
     file.copy(graph_obj_src, graph_obj_dst)
   }
   if (!file.exists(graph_obj_dst)) {
-    stop("Graph.obj introuvable. Attendu dans ", graph_obj_src, " ou ", graph_obj_dst)
+    
+    message("Graph.obj introuvable. Attendu dans ", graph_obj_src, " ou ", graph_obj_dst)
+    
+    # Construction de Graph.obj
+    log <- otp_build_graph(otp = path_otp,
+                           dir = path_data,memory=8000)
   }
 
-  local_otp_jar <- file.path(cours_dir, "data", "otp-1.5.0-shaded.jar")
-  path_otp <- if (file.exists(local_otp_jar)) local_otp_jar else otp_dl_jar()
 
   # Lance OTP uniquement si aucune connexion n'est deja active.
   otpcon <- tryCatch(otp_connect(), error = function(e) NULL)
@@ -508,14 +519,15 @@ if (!exists("otpcon")) {
 }
 ```
 
-```{r,results='hide', eval=use_otp && otp_available}
+
+```{r,results='hide', eval=otp_available}
 iso <- otp_isochrone(
   otpcon,
   fromPlace = sirene_grenoble,
   fromID = sirene_grenoble$siret,
   mode = c("WALK", "TRANSIT"),
   maxWalkDistance = 1500,
-  date_time = as.POSIXct(strptime("2022-02-22 08:35", "%Y-%m-%d %H:%M")),
+  date_time = as.POSIXct(strptime("2026-02-18 08:35", "%Y-%m-%d %H:%M")),
   cutoffSec = c(6, 8, 10, 12) * 60
 )
 colnames(iso)[3] <- "siret"
@@ -537,7 +549,9 @@ if (!feature_iso %in% colnames(iris_grenoble)) {
   stop("Feature absente dans iris_grenoble: ", feature_iso)
 }
 ```
-```{r,message=FALSE, eval=use_otp && otp_available}
+
+
+```{r,message=FALSE, eval=otp_available}
 tmap_mode("view")
 tm_shape(iris_grenoble) +
   tm_polygons(
@@ -570,7 +584,9 @@ tm_shape(iris_grenoble) +
   ) +
   tm_borders()
 ```
-```{r, eval=use_otp && otp_available}
+
+
+```{r, eval=otp_available}
 iso600 <- iso %>% filter(time == 600)
 
 iris_grenoble$nb_supermarche_per_iris <- rowSums(
@@ -587,7 +603,9 @@ tm_shape(iris_grenoble) +
   ) +
   tm_text(text = "iris_name", size = 0.8)
 ```
-```{r, eval=use_otp && otp_available}
+
+
+```{r, eval=otp_available}
 data_temp <- matrix(0, nrow = nrow(iris_grenoble), ncol = nrow(iso600))
 for (j in 1:nrow(iso600)) {
   for (i in 1:nrow(iris_grenoble)) {
@@ -609,7 +627,9 @@ data_temp2 <- as.data.frame(data_temp2)
 colnames(data_temp2) <- unique(iso600$enseigne1et)
 write.csv(data_temp2, file.path(processed_dir, "nb_pdv_iris_iso10_2026.csv"), row.names = FALSE)
 ```
-```{r, eval=use_otp && otp_available}
+
+
+```{r, eval=otp_available}
 intersect_pct <- st_intersection(iris_grenoble, iso600) %>%
   mutate(intersect_area = st_area(.)) %>%
   dplyr::select(iris_name, intersect_area) %>%
@@ -618,7 +638,9 @@ intersect_pct <- st_intersection(iris_grenoble, iso600) %>%
   st_drop_geometry() %>%
   unique()
 ```
-```{r, eval=use_otp && otp_available}
+
+
+```{r, eval=otp_available}
 iris_grenoble <- mutate(iris_grenoble, iris_area = st_area(iris_grenoble))
 
 iris_grenoble <- merge(iris_grenoble, intersect_pct, by = "iris_name", all.x = TRUE)
@@ -646,7 +668,8 @@ tm_shape(iris_grenoble) +
   ) +
   tm_layout(legend.outside = TRUE)
 ```
-```{r, eval=use_otp && otp_available}
+
+```{r, eval=otp_available}
 st_write(
   iris_grenoble,
   file.path(processed_dir, "iris_grenoble_iso10_2026.gpkg"),
