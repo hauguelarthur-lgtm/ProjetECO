@@ -1010,7 +1010,6 @@ creer_carte <- function(sf_polygones, sf_points, var_poly, titre, palette="Blues
       col = "grey20",
       lwd = 0.4,
       size = 0.5,
-      id = "siren",
       popup.vars = c("Enseigne", "Classe", "Type_PV")
     ) +
     tm_layout(title = titre, legend.outside = TRUE)
