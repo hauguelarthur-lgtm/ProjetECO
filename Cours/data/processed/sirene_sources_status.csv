@@ -1,4 +1,0 @@
-source_id,dsn,layer,shp_path,exists,read_ok,error,n_rows,n_cols
-raw_dataseed_sirene_2,../data/raw,dataseed-sirene-2,../data/raw/dataseed-sirene-2.shp,TRUE,TRUE,NA,342,107
-raw_dataseed_sirene_1,../data/raw,dataseed-sirene-1,../data/raw/dataseed-sirene-1.shp,TRUE,TRUE,NA,239,107
-actif_dataseed_sirene_1,../data/actif,dataseed-sirene-1,../data/actif/dataseed-sirene-1.shp,TRUE,TRUE,NA,239,107
