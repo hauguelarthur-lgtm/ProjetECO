@@ -1522,6 +1522,118 @@ map_avant
 map_2025
 ```
 
+PARTIE 4.1: Comparaison super/hyper vs drives (2025)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+```{r}
+# Base 2025: uniquement super/hyper
+super_hyper_2025 <- sirene_zone_etude %>%
+  filter(as.character(Type_PV) %in% c("super", "hyper")) %>%
+  mutate(
+    siret_chr = as.character(siret),
+    siret = as.character(siret)
+  )
+
+# Lecture crossref drives (priorite au fichier v3)
+crossref_candidates <- c(
+  file.path(cours_dir, "data", "processed", "crossref_supermarches_drives_zone_v3.csv"),
+  file.path(cours_dir, "data", "processed", "crossref_supermarches_drives_zone.csv"),
+  file.path(cours_dir, "data", "processed", "crossref_supermarches_drives.csv")
+)
+crossref_path <- crossref_candidates[file.exists(crossref_candidates)][1]
+
+if (is.na(crossref_path)) {
+  message("Aucun fichier crossref drives trouve dans data/processed. La couche drives sera vide.")
+  drives_2025 <- super_hyper_2025[0, ] %>%
+    mutate(drives_types = NA_character_, match_method = NA_character_)
+} else {
+  crossref_drives <- readr::read_csv(crossref_path, show_col_types = FALSE) %>%
+    mutate(
+      siret_chr = as.character(siret),
+      drive_trouve = as.logical(drive_trouve),
+      drives_types = ifelse(
+        is.na(drives_types) | str_squish(as.character(drives_types)) == "",
+        "non_precise",
+        as.character(drives_types)
+      ),
+      match_method = as.character(match_method)
+    ) %>%
+    filter(drive_trouve %in% TRUE) %>%
+    distinct(siret_chr, .keep_all = TRUE) %>%
+    select(siret_chr, drives_types, match_method)
+
+  drives_2025 <- super_hyper_2025 %>%
+    inner_join(crossref_drives, by = "siret_chr") %>%
+    distinct(siret_chr, .keep_all = TRUE)
+}
+
+message(
+  "Comparaison super/hyper vs drives (2025): ",
+  nrow(super_hyper_2025), " points super/hyper, ",
+  nrow(drives_2025), " points avec drive."
+)
+
+super_hyper_2025_plot <- separate_overlapping_points(super_hyper_2025, offset_m = 22)
+drives_2025_plot <- separate_overlapping_points(drives_2025, offset_m = 28)
+
+map_super_hyper_vs_drives <- tm_shape(iris_zone_etude) +
+  tm_borders(col = "grey65", lwd = 1) +
+  tm_fill(alpha = 0) +
+  tm_shape(super_hyper_2025_plot) +
+  tm_symbols(
+    shape = "Type_PV",
+    shape.scale = tm_scale_categorical(values = c(super = 21, hyper = 24, superette = 22)),
+    fill = "#7B8794",
+    col = "#334E68",
+    lwd = 0.6,
+    size = 0.45,
+    popup.vars = c("siret", "Enseigne", "Type_PV", "groupe_reseau_nom")
+  ) +
+  tm_layout(
+    title = "Super/hyper (2025) vs points avec drive",
+    legend.outside = TRUE
+  ) +
+  tm_add_legend(
+    type = "symbol",
+    labels = c("Super/Hyper (2025)"),
+    shape = c(21),
+    col = c("#334E68"),
+    fill = c("#7B8794"),
+    title = "Couches"
+  )
+
+if (nrow(drives_2025_plot) > 0) {
+  map_super_hyper_vs_drives <- map_super_hyper_vs_drives +
+    tm_shape(drives_2025_plot) +
+    tm_symbols(
+      shape = "Type_PV",
+      shape.scale = tm_scale_categorical(values = c(super = 21, hyper = 24, superette = 22)),
+      fill = "#00A6FB",
+      col = "#003049",
+      lwd = 1,
+      size = 0.85,
+      popup.vars = c("siret", "Enseigne", "Type_PV", "drives_types", "match_method")
+    ) +
+    tm_add_legend(
+      type = "symbol",
+      labels = c("Drive (super)", "Drive (hyper)"),
+      shape = c(21, 24),
+      col = c("#003049", "#003049"),
+      fill = c("#00A6FB", "#00A6FB"),
+      title = "Couches"
+    )
+}
+```
+
+### Carte comparative: tous les super/hyper vs points avec drive
+
+```{r}
+map_super_hyper_vs_drives
+```
+
 PARTIE 5: Zones de chalandises en 2025
 =======================================================================
 
