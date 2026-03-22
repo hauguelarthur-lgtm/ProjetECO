@@ -321,12 +321,27 @@ connect_otp_any <- function(port_candidates = c(8080L, 8081L, 8082L, 8801L:8810L
   NULL
 }
 
+get_env_int <- function(var_name, default = NA_integer_) {
+  raw <- Sys.getenv(var_name, "")
+  if (!nzchar(raw)) return(default)
+  val <- suppressWarnings(as.integer(raw))
+  if (is.na(val)) return(default)
+  val
+}
+
 start_otp_any <- function(path_otp, path_data, start_ports = c(8901L:8910L, 8801L:8810L, 8080L:8089L)) {
+  startup_wait_sec <- max(20L, get_env_int("OTP_STARTUP_WAIT_SEC", 90L))
   for (p in start_ports) {
     started <- tryCatch({
-      setTimeLimit(elapsed = 30, transient = TRUE)
-      on.exit(setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE), add = TRUE)
-      opentripplanner::otp_setup(otp = path_otp, dir = path_data, port = p)
+      opentripplanner::otp_setup(
+        otp = path_otp,
+        dir = path_data,
+        port = p,
+        securePort = as.integer(p + 100L),
+        wait = FALSE,
+        quiet = TRUE,
+        open_browser = FALSE
+      )
       TRUE
     }, error = function(e) {
       message("Echec demarrage OTP sur port ", p, ": ", conditionMessage(e))
@@ -335,16 +350,23 @@ start_otp_any <- function(path_otp, path_data, start_ports = c(8901L:8910L, 8801
 
     if (!started) next
 
-    Sys.sleep(2)
-    con <- tryCatch(
-      opentripplanner::otp_connect(hostname = "localhost", port = p),
-      error = function(e) NULL
-    )
+    con <- NULL
+    for (i in seq_len(startup_wait_sec)) {
+      Sys.sleep(1)
+      con <- tryCatch(
+        opentripplanner::otp_connect(hostname = "localhost", port = p),
+        error = function(e) NULL
+      )
+      if (!is.null(con)) break
+    }
+
     if (!is.null(con)) {
       attr(con, "otp_port") <- p
       message("OTP demarre et connecte sur le port ", p)
       return(con)
     }
+
+    message("OTP non joignable sur le port ", p, " apres ", startup_wait_sec, "s, tentative port suivant.")
   }
   NULL
 }
@@ -406,6 +428,8 @@ otp_isochrone_safe <- function(
   if (nrow(points_sf) == 0) return(NULL)
 
   pts <- sf::st_transform(points_sf, 4326)
+  request_timeout_sec <- max(20L, get_env_int("OTP_REQUEST_TIMEOUT_SEC", 90L))
+  batch_retries <- max(1L, get_env_int("OTP_BATCH_RETRIES", 2L))
 
   call_chunk <- function(pts_chunk) {
     args <- list(
@@ -419,13 +443,23 @@ otp_isochrone_safe <- function(
     )
     if (!is.null(maxWalkDistance)) args$maxWalkDistance <- maxWalkDistance
 
-    tryCatch(
-      do.call(opentripplanner::otp_isochrone, args),
-      error = function(e) {
-        message("OTP erreur (mode=", paste(mode, collapse = "+"), "): ", conditionMessage(e))
+    for (attempt in seq_len(batch_retries)) {
+      res <- tryCatch({
+        setTimeLimit(elapsed = request_timeout_sec, transient = TRUE)
+        on.exit(setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE), add = TRUE)
+        do.call(opentripplanner::otp_isochrone, args)
+      }, error = function(e) {
+        msg <- conditionMessage(e)
+        message(
+          "OTP erreur (mode=", paste(mode, collapse = "+"),
+          ", attempt=", attempt, "/", batch_retries, "): ", msg
+        )
         NULL
-      }
-    )
+      })
+      if (!is.null(res) && nrow(res) > 0) return(res)
+      if (attempt < batch_retries) Sys.sleep(1)
+    }
+    NULL
   }
 
   old_timeout <- getOption("timeout")
@@ -1260,6 +1294,32 @@ map_1er_quartile
 map_mediane
 ```
 
+Row {data-height=300}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+```{r, results='asis'}
+rev_df <- iris_zone_etude %>%
+  st_drop_geometry() %>%
+  transmute(
+    iris_name,
+    q1 = suppressWarnings(as.numeric(`1er_quartile_euro`)),
+    med = suppressWarnings(as.numeric(Mediane_euro))
+  ) %>%
+  filter(is.finite(q1) & is.finite(med))
+
+top_med <- rev_df %>% arrange(desc(med)) %>% slice_head(n = 3) %>% pull(iris_name)
+
+cat(
+  "- Le cours rappelle qu'aucune collecte ne doit être réalisée sans cadre théorique (p.30) : ici, ces cartes documentent les **conditions de base de la demande** (cadre SCP, p.9).\n",
+  "- Le revenu médian est un proxy du **panier potentiel** ; le 1er quartile apporte une lecture de la **dispersion sociale** et du risque de surestimation si l'on se limite à une valeur centrale.\n",
+  "- IRIS les plus élevés en revenu médian (top 3) : ", paste(top_med, collapse = ", "), ".\n",
+  "- Pour la décision d'implantation, ces variables ne suffisent pas seules : elles doivent être croisées avec l'accessibilité, la concurrence locale et le format du magasin.\n",
+  sep = ""
+)
+```
+
 
 PARTIE 3.2: Cartographie du troisième quartile du revenu et du pourcentage d'actifs parmi les 15–64 ans
 =======================================================================
@@ -1281,6 +1341,33 @@ map_3e_quartile
 map_actifs
 ```
 
+Row {data-height=300}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+```{r, results='asis'}
+actifs_df <- iris_zone_etude %>%
+  st_drop_geometry() %>%
+  transmute(
+    iris_name,
+    q3 = suppressWarnings(as.numeric(`3e_quartile_euro`)),
+    actifs = suppressWarnings(as.numeric(Pct_actifs))
+  ) %>%
+  filter(is.finite(q3) & is.finite(actifs))
+
+corr_q3_actifs <- if (nrow(actifs_df) > 2) suppressWarnings(cor(actifs_df$q3, actifs_df$actifs)) else NA_real_
+
+cat(
+  "- Dans la logique du cours (p.9), on relie **demande solvable** (Q3 revenu) et **intensité d'activité** (part d'actifs) pour qualifier le potentiel commercial.\n",
+  "- La part d'actifs informe aussi les rythmes de fréquentation (achats en semaine, amplitudes horaires, usages drive/voiture).\n",
+  "- Corrélation simple entre Q3 revenu et % d'actifs sur la zone : ",
+  ifelse(is.finite(corr_q3_actifs), sprintf("%.2f", corr_q3_actifs), "NA"), ".\n",
+  "- Lecture opérationnelle : prioriser les IRIS combinant revenu élevé et part d'actifs élevée pour un format de supermarché orienté panier moyen + flux.\n",
+  sep = ""
+)
+```
+
 PARTIE 3.3: Cartographie des parts de ménages avec enfants/ avec voiture
 =======================================================================
 
@@ -1298,6 +1385,29 @@ map_menages_enfants
 
 ```{r}
 map_menages_voiture
+```
+
+Row {data-height=300}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+```{r, results='asis'}
+menages_df <- iris_zone_etude %>%
+  st_drop_geometry() %>%
+  transmute(
+    enfants = suppressWarnings(as.numeric(Pct_Menages_enfants)),
+    voiture = suppressWarnings(as.numeric(Pct_Menages_voiture))
+  ) %>%
+  filter(is.finite(enfants) & is.finite(voiture))
+
+cat(
+  "- Le cours insiste sur la cohérence entre variables et mécanismes (p.30) : **ménages avec enfants** et **motorisation** captent des comportements d'achat différents.\n",
+  "- Part de ménages avec enfants élevée : signal de courses plus volumineuses et récurrentes ; utile pour les formats super/hyper.\n",
+  "- Part de ménages motorisés élevée : sensibilité plus forte aux formats accessibles en voiture et au drive.\n",
+  "- La combinaison de ces deux cartes sert à différencier les zones à potentiel « achat de stock » des zones à potentiel « achat d'appoint ».\n",
+  sep = ""
+)
 ```
 
 PARTIE 3.4: Cartographie de la part de cadres supérieurs et de la densité de la population
@@ -1320,6 +1430,29 @@ map_cadres
 map_densite
 ```
 
+Row {data-height=300}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+```{r, results='asis'}
+cadres_df <- iris_zone_etude %>%
+  st_drop_geometry() %>%
+  transmute(
+    cadres = suppressWarnings(as.numeric(Pct_Cadres_sup)),
+    densite = suppressWarnings(as.numeric(Densite_pop))
+  ) %>%
+  filter(is.finite(cadres) & is.finite(densite))
+
+cat(
+  "- Dans l'analyse sectorielle (p.9), ces variables enrichissent les **conditions de base de la demande** :\n",
+  "- % de cadres supérieurs : proxy du panier potentiel premium et de la sensibilité à la qualité d'offre.\n",
+  "- Densité : proxy de masse critique locale et de fréquence potentielle, surtout pour les formats de proximité/supérette.\n",
+  "- En décision, il faut les croiser avec la concurrence locale (Partie 4) pour éviter de confondre une zone dense et une zone réellement sous-dotée.\n",
+  sep = ""
+)
+```
+
 
 PARTIE 4: Analyse de la concurrence
 =======================================================================
@@ -1331,8 +1464,13 @@ library(opentripplanner)
 local_otp_jar <- file.path(cours_dir, "data", "otp-1.5.0-shaded.jar")
 path_otp <- if (file.exists(local_otp_jar)) local_otp_jar else otp_dl_jar()
 otp_port <- NA_integer_
-strict_isochrones <- Sys.getenv("STRICT_ISOCHRONES", "1") != "0"
+strict_isochrones <- Sys.getenv("STRICT_ISOCHRONES", "0") != "0"
 otp_autostart <- Sys.getenv("OTP_AUTOSTART", "0") == "1"
+otp_port_env <- get_env_int("OTP_PORT", NA_integer_)
+otp_port_candidates <- unique(c(
+  if (!is.na(otp_port_env)) otp_port_env else integer(),
+  8081L, 8080L, 8082L, 8901L:8910L, 8801L:8810L
+))
   
 if (!exists("otpcon")) {
   path_data <- file.path(cours_dir, "data")
@@ -1358,12 +1496,31 @@ if (!exists("otpcon")) {
 
   # Connexion OTP: reutilise uniquement un serveur deja actif.
   # Demarrage auto en second choix pour obtenir de vraies isochrones reseau.
-  otpcon <- connect_otp_any()
+  otpcon <- NULL
+  if (!is.na(otp_port_env)) {
+    otpcon <- tryCatch(
+      opentripplanner::otp_connect(hostname = "localhost", port = otp_port_env),
+      error = function(e) NULL
+    )
+    if (!is.null(otpcon)) {
+      attr(otpcon, "otp_port") <- otp_port_env
+      message("Connexion OTP forcee via OTP_PORT=", otp_port_env)
+    } else {
+      message("OTP_PORT=", otp_port_env, " non joignable, scan des ports usuels.")
+    }
+  }
+  if (is.null(otpcon)) {
+    otpcon <- connect_otp_any(port_candidates = otp_port_candidates)
+  }
   if (is.null(otpcon) && otp_autostart) {
+    start_ports <- unique(c(
+      if (!is.na(otp_port_env)) otp_port_env else integer(),
+      8901L, 8081L
+    ))
     otpcon <- start_otp_any(
       path_otp = path_otp,
       path_data = path_data,
-      start_ports = c(8081L, 8901L)
+      start_ports = start_ports
     )
   }
   if (is.null(otpcon)) {
@@ -1522,6 +1679,28 @@ map_avant
 map_2025
 ```
 
+Row {data-height=300}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+```{r, results='asis'}
+n_2020 <- nrow(sirene_zone_avant)
+n_2025 <- nrow(sirene_zone_etude)
+delta_n <- n_2025 - n_2020
+
+type_2020 <- table(as.character(sirene_zone_avant$Type_PV))
+type_2025 <- table(as.character(sirene_zone_etude$Type_PV))
+
+cat(
+  "- Le cours rappelle qu'il faut définir le **bon niveau géographique de concurrence** (p.41) : la comparaison 2020/2025 est conduite à l'échelle de la zone d'étude locale (et non nationale).\n",
+  "- Total de points super/hyper/supérette : 2020 = ", n_2020, ", 2025 = ", n_2025, " (delta = ", ifelse(delta_n >= 0, "+", ""), delta_n, ").\n",
+  "- Cette lecture alimente le volet « structure » du cadre SCP (p.12-14) : évolution du nombre d'acteurs, répartition par format et pression concurrentielle locale.\n",
+  "- Étape suivante (Parties 5 et 6) : passer de la simple localisation à l'accessibilité effective via les zones de chalandise.\n",
+  sep = ""
+)
+```
+
 PARTIE 4.1: Comparaison super/hyper vs drives (2025)
 =======================================================================
 
@@ -1634,6 +1813,30 @@ if (nrow(drives_2025_plot) > 0) {
 map_super_hyper_vs_drives
 ```
 
+Row {data-height=300}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+```{r, results='asis'}
+n_sh <- nrow(super_hyper_2025)
+n_dr <- nrow(drives_2025)
+tx_dr <- ifelse(n_sh > 0, 100 * n_dr / n_sh, NA_real_)
+
+drives_par_type <- drives_2025 %>%
+  st_drop_geometry() %>%
+  count(Type_PV, name = "n") %>%
+  arrange(desc(n))
+
+cat(
+  "- Conformément au cours (p.42-43), on travaille à l'échelle **établissement/SIRET** pour lier correctement localisation commerciale et offre de service (ici : drive).\n",
+  "- Points super/hyper avec drive : ", n_dr, " sur ", n_sh, " (", ifelse(is.finite(tx_dr), sprintf('%.1f', tx_dr), 'NA'), "%).\n",
+  "- Cette couche permet d'affiner l'analyse concurrentielle : à localisation équivalente, un point avec drive augmente la capacité de captation de la demande motorisée.\n",
+  if (nrow(drives_par_type) > 0) paste0("- Répartition des drives par format : ", paste0(as.character(drives_par_type$Type_PV), "=", drives_par_type$n, collapse = ", "), ".\n") else "",
+  sep = ""
+)
+```
+
 PARTIE 5: Zones de chalandises en 2025
 =======================================================================
 
@@ -1715,26 +1918,12 @@ tm_shape(iris_zone_etude) +
 
 ```
 
-
-
-```{r}
+```{r, results='hide'}
 iso600 <- iso %>% filter(time == 600)
 
 iris_zone_etude$Nb_supermarches <- rowSums(
   ifelse(st_intersects(x = iris_zone_etude, y = iso600, sparse = FALSE), 1, 0)
 )
-
-tm_shape(iris_zone_etude) +
-  tm_polygons(
-    col ="Nb_supermarches",
-    style = "pretty",
-    id = "iris_name",
-    palette = "Oranges",
-    labels = c("0", "1", "2", "3", "4", "5"),
-    title = "Nbre de supermarchés accessibles en 10 min"
-  ) +
-  tm_text(text = "iris_name", size = 0.8) +
-  tm_layout(title = "Accessibilité des supermarchés (à pied)",legend.outside = TRUE)
 ```
 
 
@@ -1825,6 +2014,25 @@ tm_shape(iris_zone_etude) +
 
 ```
 
+Row {data-height=300}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+```{r, results='asis'}
+n_iso_walk <- if (exists("iso") && !is.null(iso)) nrow(iso) else 0
+n_iso_car <- if (exists("iso_car") && !is.null(iso_car)) nrow(iso_car) else 0
+
+cat(
+  "- Les deux cartes sont complémentaires : à pied pour la proximité, en voiture pour la chalandise étendue ; elles traduisent le principe du cours (p.41) d'une concurrence **locale mesurée en accessibilité**.\n",
+  "- Nombre d'isochrones piétonnes générées : ", n_iso_walk, ".\n",
+  "- Nombre d'isochrones voiture générées : ", n_iso_car, ".\n",
+  "- Le paramétrage hiérarchisé (hyper > super > supérette) aligne l'analyse sur les différences de format et de comportement de déplacement.\n",
+  "- Lecture métier : recouvrements élevés = concurrence/cannibalisation plus forte ; poches peu couvertes = zones candidates à explorer.\n",
+  sep = ""
+)
+```
+
 
 ```{r}
 iso10_car <- iso_primary_car
@@ -1846,7 +2054,7 @@ iris_zone_etude$Nb_pdv_access_primaire_voiture <- rowSums(
 
 
 
-PARTIE 6: Accessibilité et Couverture
+PARTIE 6: Accessibilité
 =======================================================================
 
 Row {data-height=1000}
@@ -1880,6 +2088,56 @@ tm_shape(iris_zone_etude) +
   tm_layout(title = "Accessibilite IRIS (hyper>super>superette)",legend.outside = TRUE)
 
 ```
+
+### Accessibilité des supermarchés (à pied)
+
+```{r}
+tm_shape(iris_zone_etude) +
+  tm_polygons(
+    col ="Nb_supermarches",
+    style = "pretty",
+    id = "iris_name",
+    palette = "Oranges",
+    labels = c("0", "1", "2", "3", "4", "5"),
+    title = "Nbre de supermarchés accessibles en 10 min"
+  ) +
+  tm_text(text = "iris_name", size = 0.8) +
+  tm_layout(title = "Accessibilité des supermarchés (à pied)",legend.outside = TRUE)
+```
+
+Row {data-height=300}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+```{r, results='asis'}
+acc_vals <- suppressWarnings(as.numeric(iris_zone_etude$Nb_pdv_access_primaire_voiture))
+acc_vals <- acc_vals[is.finite(acc_vals)]
+pieton_vals <- suppressWarnings(as.numeric(iris_zone_etude$Nb_supermarches))
+pieton_vals <- pieton_vals[is.finite(pieton_vals)]
+
+cat(
+  "- Les deux cartes sont complémentaires : `Nb_pdv_access_primaire_voiture` (concurrence multi-format) et `Nb_supermarches` (accessibilité piétonne à l'offre supermarché).\n",
+  "- Moyenne d'accessibilité IRIS (zone primaire hiérarchisée) : ",
+  ifelse(length(acc_vals) > 0, sprintf('%.2f', mean(acc_vals)), "NA"),
+  " ; médiane : ",
+  ifelse(length(acc_vals) > 0, sprintf('%.2f', stats::median(acc_vals)), "NA"),
+  ".\n",
+  "- Moyenne d'accessibilité piétonne aux supermarchés (10 min) : ",
+  ifelse(length(pieton_vals) > 0, sprintf('%.2f', mean(pieton_vals)), "NA"),
+  " ; médiane : ",
+  ifelse(length(pieton_vals) > 0, sprintf('%.2f', stats::median(pieton_vals)), "NA"),
+  ".\n",
+  "- Lecture décisionnelle : prioriser les IRIS avec faible accessibilité combinée (voiture + pied) mais potentiel de demande élevé.\n",
+  sep = ""
+)
+```
+
+PARTIE 6.1: Couverture des IRIS
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
 
 
 ```{r}
@@ -1990,6 +2248,27 @@ tm_shape(iris_zone_etude) +
   tm_layout(title = "Couverture des IRIS (zone primaire hierarchisee hyper>super>superette)", legend.outside = TRUE)
 ```
 
+Row {data-height=300}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+```{r, results='asis'}
+cov_vals <- suppressWarnings(as.numeric(iris_zone_etude$couverture_pct))
+cov_vals <- cov_vals[is.finite(cov_vals)]
+
+cat(
+  "- Conformément au cours (p.30), on transforme ici des données brutes en indicateur interprétable : **part de surface IRIS couverte (%)**.\n",
+  "- Couverture moyenne : ",
+  ifelse(length(cov_vals) > 0, sprintf('%.1f', mean(cov_vals)), "NA"),
+  "% ; médiane : ",
+  ifelse(length(cov_vals) > 0, sprintf('%.1f', stats::median(cov_vals)), "NA"),
+  "%.\n",
+  "- Une couverture élevée avec un faible nombre de points accessibles peut traduire un réseau spatialement étendu mais peu diversifié ; l'arbitrage d'implantation doit donc rester multicritère.\n",
+  sep = ""
+)
+```
+
 PARTIE 7: Autocorrelation spatiale
 =======================================================================
 
@@ -2071,6 +2350,13 @@ if (!spdep_ok) {
     theme_minimal()
 }
 ```
+
+Row {data-height=300}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+Le cours insiste sur la formalisation des relations de causalité et sur le traitement méthodologique des données (p.30, p.13). Cette carte de voisinage rend explicite la structure spatiale utilisée ensuite pour Moran et SAR/SEM. Sans cette étape, l'interprétation économétrique des effets de concurrence locale est fragile.
 
 ### Indices de concentration spatiale
 
@@ -2274,6 +2560,13 @@ if (length(predictors_ok) < 1) {
 }
 
 ```
+
+Row {data-height=300}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+Cette carte vérifie si l'information spatiale reste présente après OLS. Si des grappes de résidus persistent, cela valide l'idée du cours selon laquelle le choix du modèle (et des hypothèses) change l'interprétation économique : il faut passer à des spécifications spatiales (SAR/SEM) pour ne pas biaiser les conclusions concurrentielles.
 
 
 ### Specification et estimation SAR/SEM
@@ -2566,5 +2859,21 @@ if (!exists("top4_implantation") || nrow(top4_implantation) == 0) {
       title = "Top 4 des zones d'implantation preferables",
       legend.outside = TRUE
     )
+}
+```
+
+Row {data-height=300}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+```{r, results='asis'}
+if (exists("top4_implantation") && nrow(top4_implantation) > 0) {
+  cat(
+    "- Cette synthèse respecte les règles du cours (p.30-32) : cadre explicite, indicateurs tracés et décision multicritère plutôt qu'un seul signal.\n",
+    "- Les zones retenues combinent potentiel de demande (revenus, actifs, structure des ménages, densité) et insuffisance relative d'offre (accessibilité/couverture/concurrence).\n",
+    "- Top 4 retenu : ", paste(top4_implantation$iris_name, collapse = " ; "), ".\n",
+    sep = ""
+  )
 }
 ```
