@@ -2,7 +2,7 @@
 title: "Étude d’implantation commerciale"
 subtitle: "Projet d’ouverture d’un supermarché"
 author:
-  - Stave Icnel Dany OSIAS
+  - Stave Icnel Dany OSIAS 
   - Loïc MÉMETEAU
   - Arthur HAUGUEL
 date: "2026-02-19"
@@ -1693,7 +1693,6 @@ type_2020 <- table(as.character(sirene_zone_avant$Type_PV))
 type_2025 <- table(as.character(sirene_zone_etude$Type_PV))
 
 cat(
-  "- Le cours rappelle qu'il faut définir le **bon niveau géographique de concurrence** (p.41) : la comparaison 2020/2025 est conduite à l'échelle de la zone d'étude locale (et non nationale).\n",
   "- Total de points super/hyper/supérette : 2020 = ", n_2020, ", 2025 = ", n_2025, " (delta = ", ifelse(delta_n >= 0, "+", ""), delta_n, ").\n",
   "- Cette lecture alimente le volet « structure » du cadre SCP (p.12-14) : évolution du nombre d'acteurs, répartition par format et pression concurrentielle locale.\n",
   "- Étape suivante (Parties 5 et 6) : passer de la simple localisation à l'accessibilité effective via les zones de chalandise.\n",
@@ -2028,7 +2027,7 @@ cat(
   "- Nombre d'isochrones piétonnes générées : ", n_iso_walk, ".\n",
   "- Nombre d'isochrones voiture générées : ", n_iso_car, ".\n",
   "- Le paramétrage hiérarchisé (hyper > super > supérette) aligne l'analyse sur les différences de format et de comportement de déplacement.\n",
-  "- Lecture métier : recouvrements élevés = concurrence/cannibalisation plus forte ; poches peu couvertes = zones candidates à explorer.\n",
+  "- Recouvrements élevés = concurrence/cannibalisation plus forte ; poches peu couvertes = zones candidates à explorer.\n",
   sep = ""
 )
 ```
@@ -2181,11 +2180,22 @@ write.csv(data_temp2, file.path(processed_dir, "nb_pdv_iris_iso_primaire_hierarc
 ```{r}
 # Désactiver s2 pour plus de tolérance
 sf::sf_use_s2(FALSE)
+iris_id_col <- if ("Code_IRIS" %in% names(iris_zone_etude)) {
+  "Code_IRIS"
+} else if ("iris_code" %in% names(iris_zone_etude)) {
+  "iris_code"
+} else {
+  stop("Colonne identifiant IRIS introuvable (attendu: Code_IRIS ou iris_code).")
+}
 
 if (nrow(iso_primary_car) == 0) {
   intersect_pct <- iris_zone_etude %>%
     st_drop_geometry() %>%
-    dplyr::transmute(iris_name, intersect_area = 0)
+    dplyr::transmute(
+      !!iris_id_col := .data[[iris_id_col]],
+      iris_name,
+      intersect_area = 0
+    )
 } else {
   # Nettoyage des géométries pour éviter TopologyException
   iso_primary_car <- st_make_valid(iso_primary_car)
@@ -2197,12 +2207,12 @@ if (nrow(iso_primary_car) == 0) {
 
   # Intersection
   intersect_pct <- st_intersection(
-    iris_zone_etude %>% dplyr::select(iris_name),
+    iris_zone_etude %>% dplyr::select(dplyr::all_of(c(iris_id_col, "iris_name"))),
     iso_primary_union
   ) %>%
     mutate(intersect_area = st_area(.)) %>%
     st_drop_geometry() %>%
-    dplyr::group_by(iris_name) %>%
+    dplyr::group_by(dplyr::across(dplyr::all_of(c(iris_id_col, "iris_name")))) %>%
     dplyr::summarise(intersect_area = sum(intersect_area), .groups = "drop")
 }
 
@@ -2214,13 +2224,21 @@ sf::sf_use_s2(TRUE)
 ### Couverture des IRIS
 
 ```{r}
-iris_zone_etude <- mutate(iris_zone_etude, iris_area = st_area(iris_zone_etude))
+iris_zone_etude <- iris_zone_etude %>%
+  dplyr::select(-any_of(c("iris_area", "intersect_area", "couverture_pct"))) %>%
+  mutate(iris_area = as.numeric(st_area(geometry)))
 
-iris_zone_etude <- merge(iris_zone_etude, intersect_pct, by = "iris_name", all.x = TRUE)
+intersect_pct_join <- intersect_pct %>%
+  st_drop_geometry() %>%
+  dplyr::select(dplyr::all_of(c(iris_id_col, "intersect_area"))) %>%
+  mutate(intersect_area = as.numeric(intersect_area))
 
 iris_zone_etude <- iris_zone_etude %>%
-  mutate(intersect_area = ifelse(is.na(intersect_area), 0, intersect_area)) %>%
-  mutate(couverture_pct = pmin(100, as.numeric(intersect_area / iris_area) * 100))
+  left_join(intersect_pct_join, by = iris_id_col) %>%
+  mutate(
+    intersect_area = ifelse(is.na(intersect_area), 0, intersect_area),
+    couverture_pct = pmin(100, (intersect_area / iris_area) * 100)
+  )
 
 tm_shape(iris_zone_etude) +
   tm_polygons(
