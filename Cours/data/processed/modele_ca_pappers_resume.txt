@@ -1,0 +1,39 @@
+Modele CA super/hyper (entrainement sur Pappers + features zone Grenoble+Nord)
+Date execution: 2026-03-24 21:58:39
+
+LM utilise: log_ca_2024 ~ drive_trouve + Mediane_euro + Densite_pop + Pct_actifs + 
+LM utilise:     Pct_Menages_enfants + Pct_Menages_voiture + Pct_Cadres_sup
+n lignes (complete cases): 11
+R2 ajuste: 0.9245
+
+----- Resume LM -----
+
+Call:
+stats::lm(formula = lm_formula, data = model_cc)
+
+Residuals:
+         1          2          3          4          5          6          7 
+-1.270e-16 -5.813e-02 -3.915e-02 -3.748e-01 -1.313e-01 -7.214e-01 -6.274e-01 
+         8          9         10         11 
+ 3.258e-01  1.293e+00 -7.519e-01  1.085e+00 
+
+Coefficients:
+                      Estimate Std. Error t value Pr(>|t|)
+(Intercept)          1.727e+01  1.323e+01   1.306    0.283
+drive_trouve        -1.609e-01  1.798e+00  -0.090    0.934
+Mediane_euro         9.376e-05  2.677e-04   0.350    0.749
+Densite_pop         -2.902e+00  2.221e+00  -1.307    0.283
+Pct_actifs          -6.244e+00  1.534e+01  -0.407    0.711
+Pct_Menages_enfants  8.518e+00  2.962e+01   0.288    0.792
+Pct_Menages_voiture  6.565e+00  1.661e+01   0.395    0.719
+Pct_Cadres_sup      -7.494e+00  1.416e+01  -0.529    0.633
+
+Residual standard error: 1.238 on 3 degrees of freedom
+Multiple R-squared:  0.9773,	Adjusted R-squared:  0.9245 
+F-statistic: 18.48 on 7 and 3 DF,  p-value: 0.01791
+
+
+GLM Gamma(log) non estime:
+- CA_2024 contient des valeurs <= 0 (incompatible avec Gamma).
+
+Predictions ecrites: ./Cours/data/processed/prediction_ca_2024_super_hyper_zone.csv

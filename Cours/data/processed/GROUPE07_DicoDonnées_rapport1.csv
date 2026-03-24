@@ -1,23 +1,39 @@
-variable,codes_modalites,description,type,source,regle_construction
-siret,14 caracteres numeriques,Identifiant SIRET etablissement,character,SIRENE,reprend colonne siret normalisee
-siren,9 caracteres numeriques,Identifiant SIREN unite legale,character,SIRENE,reprend colonne siren normalisee
-raison_sociale,texte libre,Nom officiel de la societe,character,SIRENE,"coalesce(nomuniteleg, denominatio_1, denominatio, enseigne, siret)"
-denomination_usuelle,texte libre,Nom public/usuel du point de vente,character,SIRENE,"coalesce(denominatio, nomusageuni, enseigne, raison_sociale)"
-est_siege,true/false/NA,Etablissement siege,logical,SIRENE,etablisseme (oui/non) sinon comparaison siret == siret_siege
-appartient_groupe_reseau,true/false,Appartenance a un groupe/reseau,logical,Heuristique script,TRUE si enseigne/denomination matche table de correspondance
-groupe_reseau_nom,noms de groupes / NA,Nom du groupe ou reseau rattache,character,Heuristique script,mapping regex enseigne->groupe
-date_creation_etablissement,jj/mm/aaaa / NA,Date de creation de l'etablissement,Date,SIRENE,format_date_fr(datecreatio)
-drive_accole,true/false,Presence d'un drive accole,logical,Fichier drives,join drives par siret ou adresse
-date_creation_drive_accole,jj/mm/aaaa / NA,Date de creation du drive accole,Date,Fichier drives,date drive type accole
-drive_deporte,true/false,Presence d'un drive deporte,logical,Fichier drives,join drives par siret ou adresse
-code_naf,code NAF rev2 / NA,Code NAF du point de vente,character,SIRENE,extract_naf_code sur colonnes activite
-libelle_naf,texte / NA,Libelle du code NAF,character,Heuristique script,mapping simplifie des codes 47.11*
-adresse_postale,texte libre,Adresse postale complete,character,SIRENE,make_adresse_postale (adresse complete sinon concat champs adresse)
-code_iris,code IRIS / NA,Code IRIS du point,character,INSEE georef IRIS,jointure spatiale point -> polygons IRIS
-dans_zone_etude,true/false,Point dans la zone du groupe (Grenoble + Nord),logical,Heuristique commune,TRUE si commune in Grenoble/Meylan/La Tronche/Corenc/Saint-Martin-le-Vinoux/Saint-Egreve
-dans_zone_agglo_groupes,true/false,Point dans l'agglo complete des groupes geomarketing,logical,Heuristique commune,TRUE si commune in Grenoble+Nord+Ouest+Sud-Est
-groupe_geomarketing,Grenoble/Nord/Ouest/Sud-Est/NA,Groupe territorial geomarketing,character,Heuristique commune,mapping commune -> groupe selon script carte groupes report.R
-dans_zone_fichier,true/false,Point dans la zone spatiale chargee via fichier zone_etude (ou bbox fallback),logical,Zone d'etude,st_intersects avec zone_etude chargee
-type_point_vente,super/hyper/autre,Typologie pragmatique du point de vente,character,Heuristique script + SIRENE,NAF 47.11* + mots-cles enseigne/denomination + taille etab
-enseigne,texte normalise / ENSEIGNE_INCONNUE,Enseigne normalisee,character,SIRENE,normalize_enseigne + coalesce enseigne1/2/3/denomination
-source_drive,none/manual_web/bonial_nielsen/lsa_europresse/autre,Source de l'information drive,character,Fichier drives,none si pas d'info drives sinon source du fichier
+"variable","type","description","source","regle_construction"
+"SIRET","character","Identifiant unique de l’établissement","SIRENE","Copie directe de siret"
+"SIREN","character","Identifiant de l’unité légale","SIRENE","Copie directe de siren"
+"Raison_sociale","character","Dénomination officielle de l’établissement","SIRENE","normalize_enseigne(denominatio)"
+"Nom_usuel","character","Nom commercial/usuel retenu","SIRENE + nettoyage","enseigne_de sinon denominatio"
+"Nom_usuel_source","character","Variable source du nom usuel retenu","Traitement interne","enseigne_de ou denominatio selon disponibilite"
+"Nom_usuel_alternatif","character","Nom alternatif utile au suivi des changements d’enseigne","SIRENE + traitement interne","denomination alternative si differente"
+"Date_changement_nom","character","Date de changement d’enseigne/dénomination (si connue)","A completer","Placeholder (source externe future)"
+"Flag_changement_nom","logical","Indique une transition d’enseigne/dénomination","Traitement interne","FALSE par defaut"
+"Siege","logical","Indique si l’établissement est siège","SIRENE","siret == siret_du_si"
+"Appartient_groupe","logical","Appartenance à un groupe/réseau","SIRENE + mapping groupe","Nom_groupe non NA"
+"Nom_groupe","character","Nom du groupe commercial","SIRENE + mapping groupe","groupe_de_l sinon mapping enseigne->groupe"
+"Date_creation","character","Date de création de l’établissement","SIRENE","as_date_flexible(date_de_cre)"
+"Drive_accole","logical","Présence d’un drive accolé","crossref drives / fallback","drive_trouve et type drive contient accole/voiture"
+"Date_creation_drive","character","Date de création du drive","A completer","date_creation_drive si disponible sinon NA"
+"Drive_deporte","logical","Présence d’un drive déporté","crossref drives / fallback","drive_trouve et non drive_accole"
+"Code_NAF","character","Code NAF de l’établissement","SIRENE","normalize_naf(...)"
+"Libelle_NAF","character","Libellé du code NAF","SIRENE","Copie nomenclatur"
+"Adresse","character","Adresse postale complète","SIRENE","concat(adresse_de_, code_postal, commune_de_)"
+"Code_IRIS","character","Code IRIS de localisation","INSEE IRIS + jointure spatiale","st_join point sur IRIS"
+"Zone_etude","logical","True si point dans la zone cible Nord","Traitement interne","commune_norm appartient a communes_nord_norm"
+"Nb_pdv_2020","numeric","Nombre de super/hyper/superette par IRIS (2020)","SIRENE 2020 + jointure IRIS","Comptage par Code_IRIS"
+"Nb_pdv_2025","numeric","Nombre de super/hyper/superette par IRIS (2025)","SIRENE 2025 + jointure IRIS","Comptage par Code_IRIS"
+"Nb_drives_2025","numeric","Nombre de drives par IRIS (2025)","crossref drives + jointure IRIS","Comptage des points avec drive"
+"Nb_pdv_access_primaire_voiture_2020","numeric","Points accessibles en zone primaire voiture (2020)","OTP/fallback + SIRENE 2020","rowSums(st_intersects(IRIS, iso primaire))"
+"Nb_pdv_access_primaire_voiture_2025","numeric","Points accessibles en zone primaire voiture (2025)","OTP/fallback + SIRENE 2025","rowSums(st_intersects(IRIS, iso primaire))"
+"Nb_pdv_access_primaire_voiture","numeric","Alias 2025 pour l'accessibilite primaire voiture","Traitement interne","Copie de Nb_pdv_access_primaire_voiture_2025"
+"Nb_supermarches","numeric","Nombre de super/hyper/superette accessibles a pied (10 min)","OTP/fallback","rowSums(st_intersects(IRIS, iso600))"
+"couverture_pct_2020","numeric","Part de surface IRIS couverte (2020)","OTP/fallback + calcul surfacique","intersect_area / iris_area * 100"
+"couverture_pct_2025","numeric","Part de surface IRIS couverte (2025)","OTP/fallback + calcul surfacique","intersect_area / iris_area * 100"
+"couverture_pct","numeric","Alias 2025 de la couverture","Traitement interne","Copie de couverture_pct_2025"
+"HHI_2020","numeric","Indice Herfindahl-Hirschman par enseigne (2020)","SIRENE 2020","Somme des parts au carre"
+"HHI_2025","numeric","Indice Herfindahl-Hirschman par enseigne (2025)","SIRENE 2025","Somme des parts au carre"
+"score_total_A","numeric","Score classement A (socio-demo uniquement)","Traitement interne","Agregation ponderee variables tache 1.2"
+"score_total_B","numeric","Score classement B (socio-demo + concurrence)","Traitement interne","Agregation ponderee tache 1.2 + 1.3"
+"score_offre_gap_B","numeric","Sous-score d'insuffisance d'offre (classement B)","Traitement interne","Combinaison concurrence/couverture/drives"
+"rank_A","numeric","Rang selon classement A","Traitement interne","rank(-score_total_A)"
+"rank_B","numeric","Rang selon classement B","Traitement interne","rank(-score_total_B)"
+"delta_rang_A_B","numeric","Difference de rang entre classement A et B","Traitement interne","rank_A - rank_B"
