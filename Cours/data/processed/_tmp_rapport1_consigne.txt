@@ -1,0 +1,189 @@
+               Cahier des charges Rapports Données Entreprise_ Zone de chalandise
+                                          M1 BDA 2025_26, UGA
+
+1er rapport – choix d’une localisation pour un nouveau supermarché
+Objectif : partant des données INSEE au niveau IRIS et de la base de données SIRENE géo-
+localisée, et toutes autres données que vous collecterez, vous devez justifier d’un site
+d’implantation d’un supermarché (code NAF 4711.D) au sein de l’agglomération grenobloise
+(Grenoble + une zone prédéfinie (Ouest, Nord ou Sud/Est)).
+Coordinateur : Adil Boufarsi, adil.boufarsi@univ-grenoble-alpes.fr
+Organisation : travail en groupe, réalisé en grande partie durant les séances CM/TD.
+Format : un « flexdashboard » via R Markdown/Quarto (structurez-le par onglets, en reprenant
+la structuration par tâches et sous-tâches) + un fichier csv des points de vente retenus pour
+l’étude + un fichier csv pour le dictionnaire des données.
+Date de rendu : le 3/04/2026, 18h (version électronique, dépôt casier Moodle).
+
+Tâche 1.1 : table des ponctuels et seuils retenus pour les zones de chalandise.
+Construisez un 1er fichier csv (numéro du groupe_TabPonctuels_rapport1.csv) comprenant
+obligatoirement, par point de vente (en ligne), les informations suivantes (en colonne)1 et pour
+l’ensemble de l’agglomération grenobloise : numéros SIRET de l’unité légale, sa raison sociale
+(le nom officiel de la société) sa dénomination usuelle (nom sous lequel elle est connue du
+public), indicatrice précisant si l'établissement est le siège ou non de l'unité légale (true/false),
+indicatrice précisant s’il appartient à un groupe / réseau (true/false), nom du groupe / réseau
+(ex. pour un Intermarché, ITM Entreprises / Groupement Mousquetaires, NULL si
+indépendant), date création de l’établissement (jour/mois/année), indicatrice indiquant s’il
+dispose d’un drive accolé (true/false), date de création du drive accolé (NULL si le point de
+vente n’a pas de drive accolé), indicatrice précisant si l’unité légale est un drive déporté
+(true/false), code NAF de l’établissement (NAF rev2, 4 lettres 1 chiffre), libellé du code NAF,
+son adresse postale, code IRIS de l’unité légale, indicatrice indiquant si l’unité égale appartient
+à votre zone d’étude ou non (true/false).2
+Construisez un 2nd fichier csv (numéro du groupe_DicoDonnées_rapport1.csv) correspondant
+à votre dictionnaire de données – variables, pour les données déjà mise en forme dans votre
+table de ponctuels (codes retenus pour vos variables, descriptif, type, source). Vous le
+compléterez au fil des tâches réalisées et des variables créées.
+
+
+
+1
+  Pour construire la liste des super et hypermarchés vous pourrez utiliser le fichier SIRENE de l’INSEE. Pour les
+informations relatives aux drives, leur identification nécessitera de croiser différentes sources : requêtes internet
+pour récupérer les listes de drives à Grenoble et environs, sources spécialisées telles que LSA – via Europresse
+interrogeable via Beluga, cartographie dynamique des drives en ligne, produite par Bonial-Nielsen. Récupérez les
+SIRET à partir des adresses postales des drives, complétez les dates de création – cessation via les SIRET (à partir
+du fichier SIRENE, sur des sites tels que papers.com, societe.com), idem pour les codes NAF.
+2
+  Vous devrez créer des variables complémentaires en cas de changements de dénomination usuelle (ex. lors d’un
+changement d’enseigne, de Casino à Intermarché par exemple, ajout d’une date pour le changement, de variable.s
+permettant de tracer le changement de nom, etc.).
+
+                                                                                                                   1
+
+Justifiez les seuils retenus pour délimiter les zones de chalandise des points de vente de votre
+table de ponctuels (isochrones et isodistances). Cette tâche doit être renseignée dans un onglet
+spécifique de votre flexdashboard. Vous devez obligatoirement vous appuyer sur au moins
+un document produit par l’Autorité de la Concurrence (voir sur son site, pour des dossiers
+de concentration impliquant des entreprises du secteur par exemple) et un autre provenant
+d’une revue professionnelle (ex. une revue comme LSA, interrogeable via Beluga /
+Europresse). Les sources utilisées doivent être reportées dans le flexdashboard (et mises aux
+normes bibliographiques ; https://www.epfl.ch/campus/library/fr/formations/citation-droit-
+auteur/ ).
+
+Tâche 1.2 : caractéristiques socioéconomiques et démographiques des IRIS.
+Réalisez des cartes socioéconomiques et démographiques de votre zone d’étude, au niveau des
+IRIS (dans le flexdashboard). Ces 1ères cartes (au moins 5 cartes et 5 variables différentes,
+couvrant la période 2000-2025) devront être systématiquement légendées (titre, étiquette des
+données, etc.) et indiquer leurs sources (chaque source devra faire l’objet d’une référence
+bibliographique, aux normes, dans la partie commentaire des cartes).3
+Les variables retenues doivent être utiles à l’estimation du CA potentiel du supermarché que
+vous proposez de créer.4 Pour justifier du choix de vos variables (à faire en commentaire des
+cartes), vous devrez obligatoirement vous appuyer sur au moins une publication INSEE (ou
+CREDOC) portant sur la consommation alimentaire des français, ses déterminants, pour la
+période d’étude (ou proche) ainsi qu’un document expliquant comment calculer le CA potentiel
+d’une zone de chalandise. Vous trouverez dans les fichiers fournis par A.Boufarsi des données
+longitudinales intéressantes pour analyser l’attractivité d’un IRIS. Vous pourrez les compléter
+par d’autres accessibles en open data (voir notamment le site INSEE, ou encore data.gouv.fr).
+Chaque nouvelle variable devra être ajoutée et renseignée dans le fichier csv numéro du
+groupe_DicoDonnées_rapport1.csv
+
+Tâche 1.3 : analyse de la concurrence.
+Géo-localisez d’abord les supermarchés et hypermarchés de votre zone en 2020 et 2025 sur
+deux cartes distinctes (on doit pouvoir identifier le groupe / réseau d’appartenance et le type –
+super et hypermarché de chaque point de vente), avec un comptage de ces points de vente par
+IRIS (attention : « événement » autour de Casino en 2023-25) (dans le flexdashboard).
+Géo-localisez ensuite sur une autre carte, pour 2025 uniquement, les drives déportés ainsi que
+les drives accolés (avec un identifiant de son enseigne d’appartenance), avec un comptage des
+drives (accolés et déportés) par IRIS (vous indiquerez en commentaire si l’ajout des drives
+modifie ou non, et comment, votre analyse de la concurrence).
+
+
+3
+  Il est vivement conseillé de consulter sur le moodle du cours : Asterop 2024 exemple étude locale de marché
+"magasins alimentaires Grenoble" (des idées de variables, indicateurs, visualisations – cartes, graphiques, etc.).
+4
+  Partant des données clefs, vous pourrez calculer des indicateurs en valeur brute (ex. nombre de ménages dans
+l’IRIS), en valeur normalisée (ex. % ouvriers / total salariés de l’IRIS), en valeur indicée (valeur d’un indice /
+valeur de ce même indice pour une zone de référence, par exemple la France), calculer des moyennes, variances,
+taux de croissance, etc. toutes choses que vous pourrez visualiser sur des cartes, des graphiques et qui vous seront
+utiles pour justifier de votre choix d’implantation.
+
+                                                                                                                  2
+
+Représentez les zones de chalandises de chacun des points de vente retenus pour votre étude
+(isochrones), pour 2025 uniquement, sur une nouvelle carte. Vérifiez si les zones de chalandise
+d’une même enseigne se recoupent ou non (en respect des clauses usuelles d’exclusivité
+territoriale).
+Calculez le nombre de points de vente accessibles par IRIS au seuil de - à définir – ainsi que
+les taux de couverture par IRIS (voir séance n°2, partie 3.2) et visualisez vos résultats sur deux
+cartes distinctes. Vous préciserez en commentaires si des évolutions notables ont été constatées
+entre 2020 et 2025 (les calculs et cartes ne sont pas à joindre dans le flexdashboard mais
+pourront être demandés pour vérifications).
+Calculez, par enseigne et au niveau de la zone affectée à votre groupe, les indices d’entropie et
+de Moran en 2020 et 2025. Proposez (et calculez) un indicateur de concentration au niveau des
+enseignes pour votre zone d’étude en 2020 et 2025. Vous enrichirez vos commentaires relatifs
+à ces trois derniers types d’indices par des informations collectées pour ces grandes enseignes
+au niveau national (ex. parts de marché au niveau national). Chaque nouvelle variable devra
+être ajoutée et renseignée dans le fichier csv numéro du groupe_DicoDonnées_rapport1.csv
+Tâche 1.4 : choix de l’IRIS d’implantation et de l’enseigne.
+Classez les 4 meilleurs IRIS candidats pour l’implantation d’un supermarché au regard des
+indicateurs et analyses de la tâche 2 (réalisez un 1er tableau de synthèse). Renouvelez votre
+classement en tenant compte des indicateurs et analyses de la tâche 3 (réalisez un 2nd tableau
+de synthèse) (dans le flexdashboard).
+Tâche bonus : Produire une carte des résidus issus des modèles MCO et SAR (voir séance n°3,
+partie 2.3), puis en proposer une analyse interprétative.
+Une fois justifié le meilleur emplacement (IRIS), produisez une dernière carte comprenant
+l’ensemble des ponctuels plus celui créé, les zones de chalandise de chacun, et pour un fond de
+carte permettant de visualiser les revenus médians par IRIS (ou le nombre de ménages) en 2024.
+Vérifiez l’absence de chevauchements entre la zone de chalandise de la nouvelle entité et celles
+des autres points de vente de la même enseigne. Discutez des conséquences éventuelles de votre
+implantation en termes d’intensité de la concurrence (vous pourriez comparer la valeur
+d’indicateurs clefs avant – après implantation, contrôler de la concurrence hors zone).
+En 2nd bonus, estimez le CA potentiel (hors prise en compte de la concurrence ; ex. : calcul,
+pour chacun des IRIS couverts par la zone de chalandise, du nombre de ménages x revenu
+médian x coefficient budgétaire alimentation, puis somme des résultats obtenus). Vérifiez si ce
+CA potentiel (un maximum) correspond à celui attendu pour un supermarché de l’enseigne.5
+
+
+
+
+5
+  Vous pouvez rechercher des informations sur les CA moyens de points de vente de même surface (votre zone,
+en France), des seuils usuellement retenus par la profession (zones de chalandise minimum, seuil de population
+minimum, CA critique, etc.), ceux avancés dans des contrats de franchise de l’enseigne retenue (ou une autre
+similaire).
+
+                                                                                                            3
+
+2ème rapport – choix d’une localisation pour un magasin « bio ».
+Objectifs : renouveler l’analyse réalisée dans le 1er rapport pour l’implantation d’un commerce
+de détail alimentaire spécialisé, pour un positionnement sur le bio (ex. un Biocoop) ; tenir
+compte des commentaires faits pour 1er rapport (la non prise en compte de ces derniers dans
+votre 2nd rapport minorera la note du 2nd rapport).
+Coordinateur : Frédéric Corolleur, frederic.corolleur@univ-grenoble-alpes.fr
+Organisation : en groupe, travail réalisé partiellement en séances
+Format : un « flexdashboard » via R Markdown/Quarto (structurez-le par onglets, en reprenant
+la structuration par tâches et sous-tâches) + un fichier csv des points de vente retenus pour
+l’étude + un fichier csv pour le dictionnaire des données.
+Date de rendu : le 27/04/2026, 12h (version électronique, dépôt casier Moodle).
+
+Tâche 2.1 : table des ponctuels et seuils retenus pour les zones de chalandise.
+La tâche 2.1. est à l’identique de la tâche 1.1. du 1er rapport (même zone attribuée, même
+composition de groupe). Attention, le point de vente à créer n’a pas le même positionnement
+produit que le précédent, ni la même surface de vente (surface moindre). Vous devrez construire
+une nouvelle table de ponctuels (comprenant à priori peu ou aucun des ponctuels identifiés en
+1.1., pour de nouveaux introduits, sous d’autres codes NAF)6 et justifier des seuils pour les
+zones de chalandise (à priori distincts des précédents).
+
+Tâche 2.2 : caractéristiques socioéconomiques et démographiques des IRIS.
+La tâche 2.2. est à l’identique de la tâche 1.2. du 1er rapport. Vous pourriez être conduit à ajuster
+le choix de vos variables d’intérêt (pour revenu, ménage / population par IRIS toujours clefs).
+
+Tâche 2.3 : analyse de la concurrence.
+La tâche 2.3. est à l’identique de la tâche 1.3. du 1er rapport (vous devriez plus facilement
+proposer et calculer des indicateurs de concentration, pour des informations CA à rechercher
+sur des sites types papers.com, pour des données comptables).
+
+Tâche 2.4 : choix de l’IRIS d’implantation et de l’enseigne.
+La tâche 2.4. est à l’identique de la tâche 1.4. du 1er rapport.
+
+
+
+
+6
+ Pour ce 2ème rapport, la difficulté ne porte pas sur l’identification des drives mais sur la prise en compte éventuelle
+de nouveaux entrants liés au e-commerce (ex. : Greenweez, Aurore Market, La Fourche, Kazidomi), leurs liens
+avec des grandes enseignes, ou à des modes de distribution alternative (ex. AMAP) et à leur degré d’implantation
+sur votre zone. Vous devrez mobiliser les mêmes sources obligatoires (au moins un document de l’Autorité de la
+Concurrence, un autre d’une revue spécialisée). Vous pourriez consulter le sommaire d’études de Xerfi, etc.
+
+                                                                                                                      4
+

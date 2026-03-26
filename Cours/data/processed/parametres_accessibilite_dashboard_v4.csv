@@ -1,0 +1,4 @@
+Parametre,Valeur,Details,Mode_isochrones_execute,Strict_isochrones
+Seuil_accessibilite_voiture_dashboard,"Zone primaire hierarchisee: hyper=20 min, super=10 min, superette=5 min",Utilise pour Nb_PDV_access_voiture_2025/2020 et couverture_2025/2020.,otp_reseau,TRUE
+Seuil_accessibilite_pied_dashboard,Comptage sur isochrones WALK a 10 min (time==600),"Profil walk: hyper=8/10 min, super=5/10 min, superette=5/10 min; le comptage retient la couronne 10 min.",otp_reseau,TRUE
+Regle_hierarchisation_points_de_vente,Hierarchie par format pour la zone primaire voiture,Filtre: (Type_PV==hyper & time==20*60) OR (Type_PV==super & time==10*60) OR (Type_PV==superette & time==5*60).,otp_reseau,TRUE

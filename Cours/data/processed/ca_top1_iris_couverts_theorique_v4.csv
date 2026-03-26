@@ -1,0 +1,5 @@
+Code_IRIS,iris_name,com_name,part_surface_couverte_pct,Menages,Mediane_euro,coefficient_alimentaire,depense_alimentaire_theorique,depense_alimentaire_theorique_corrigee,iris_renseigne
+382290302,Haut Meylan,Meylan,64.16393333497295,1146,41280,0.12,5676825.6,3642474.593526678,TRUE
+381260000,Corenc (commune non irisée),Corenc,25.649976001375816,1647,0,,,,FALSE
+382290301,Maupertuis-Saint-Mury-Charlaix,Meylan,22.730371072597737,1236,39064,0.12,5793972.4799999995,1316991.4445481936,TRUE
+382290201,Ayguinards,Meylan,0.08783793969572998,961,26566,0.16,4084788.16,3587.993760679118,TRUE
