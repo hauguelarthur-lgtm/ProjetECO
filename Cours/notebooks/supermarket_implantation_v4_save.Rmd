@@ -458,6 +458,21 @@ map_group_reseau <- function(enseigne, denomination = NULL) {
   )
 }
 
+sanitize_group_label <- function(x) {
+  out <- normalize_enseigne(x)
+  up <- str_to_upper(out)
+  invalid_pattern <- paste(
+    c(
+      "COMMERCE", "ACTIVIT", "RESTAUR", "TRANSPORT", "LOCATION",
+      "SERVICES", "CONSTRUCTION", "TRAVAUX", "NAF", "DETAIL EN MAGASIN",
+      "AUTRE", "SANTE", "IMMOBILIER", "POSTE"
+    ),
+    collapse = "|"
+  )
+  out[is.na(out) | str_detect(up, invalid_pattern)] <- NA_character_
+  out
+}
+
 compute_hhi <- function(group_vec) {
   x <- as.character(group_vec)
   x <- x[!is.na(x) & str_squish(x) != ""]
@@ -1134,12 +1149,22 @@ drive_info <- tibble(
 
 if (!is.na(crossref_path)) {
   drive_info <- readr::read_csv(crossref_path, show_col_types = FALSE) %>%
-    transmute(
-      siret = as.character(siret),
-      drive_trouve = as.logical(drive_trouve),
-      drives_types = as.character(drives_types),
-      date_creation_drive = as.Date(NA)
-    ) %>%
+    {
+      date_drive_raw <- coalesce_chr(
+        .,
+        c(
+          "date_creation_drive", "date_creation", "date_creation_drive_accole",
+          "date_ouverture_drive", "date_ouverture", "date_drive"
+        )
+      )
+      transmute(
+        .,
+        siret = as.character(siret),
+        drive_trouve = as.logical(drive_trouve),
+        drives_types = as.character(drives_types),
+        date_creation_drive = as_date_flexible(date_drive_raw)
+      )
+    } %>%
     distinct(siret, .keep_all = TRUE)
 } else {
   fallback_drive_path <- file.path(cours_dir, "data", "raw", "drives_grenoble.csv")
@@ -1191,24 +1216,44 @@ if (!is.na(crossref_path)) {
   }
 }
 
-tab_ponctuels <- sirene_agglo_tab %>%
-  st_drop_geometry() %>%
+tab_ponctuels_raw <- sirene_agglo_tab %>%
+  st_drop_geometry()
+
+tab_ponctuels_raw$raison_sociale_raw <- coalesce_chr(
+  tab_ponctuels_raw,
+  c("denominatio", "denominatio.1", "denominatio.2", "denominatio.3", "denominatio.4")
+)
+tab_ponctuels_raw$enseigne_raw <- coalesce_chr(
+  tab_ponctuels_raw,
+  c("enseigne_de", "enseigne_de.1", "enseigne_de.2")
+)
+tab_ponctuels_raw$groupe_raw <- coalesce_chr(
+  tab_ponctuels_raw,
+  c("groupe_de_l", "groupe_de_l.1")
+)
+
+tab_ponctuels <- tab_ponctuels_raw %>%
   mutate(
     siret = as.character(siret),
     siren = as.character(siren),
-    Nom_usuel_calc = normalize_enseigne(enseigne_de),
-    Nom_usuel_calc = ifelse(is.na(Nom_usuel_calc), normalize_enseigne(denominatio), Nom_usuel_calc),
-    Nom_usuel_source = ifelse(!is.na(normalize_enseigne(enseigne_de)), "enseigne_de", "denominatio"),
+    Raison_sociale_calc = normalize_enseigne(raison_sociale_raw),
+    Nom_usuel_calc = normalize_enseigne(enseigne_raw),
+    Nom_usuel_calc = ifelse(is.na(Nom_usuel_calc), Raison_sociale_calc, Nom_usuel_calc),
+    Nom_usuel_source = dplyr::case_when(
+      !is.na(normalize_enseigne(enseigne_raw)) ~ "enseigne_de",
+      !is.na(normalize_enseigne(raison_sociale_raw)) ~ "denominatio",
+      TRUE ~ NA_character_
+    ),
     Nom_usuel_alternatif = ifelse(
-      !is.na(normalize_enseigne(enseigne_de)) & !is.na(normalize_enseigne(denominatio)) &
-        normalize_enseigne(enseigne_de) != normalize_enseigne(denominatio),
-      normalize_enseigne(denominatio),
+      !is.na(normalize_enseigne(enseigne_raw)) & !is.na(normalize_enseigne(raison_sociale_raw)) &
+        normalize_enseigne(enseigne_raw) != normalize_enseigne(raison_sociale_raw),
+      normalize_enseigne(raison_sociale_raw),
       NA_character_
     ),
-    Nom_groupe_calc = ifelse(!is.na(groupe_de_l) & str_squish(groupe_de_l) != "", as.character(groupe_de_l), NA_character_),
+    Nom_groupe_calc = sanitize_group_label(groupe_raw),
     Nom_groupe_calc = ifelse(
       is.na(Nom_groupe_calc),
-      map_group_reseau(normalize_enseigne(enseigne_de), normalize_enseigne(denominatio)),
+      map_group_reseau(Nom_usuel_calc, Raison_sociale_calc),
       Nom_groupe_calc
     ),
     Nom_groupe_calc = ifelse(Nom_groupe_calc == "Independant/Autre", NA_character_, Nom_groupe_calc),
@@ -1225,12 +1270,12 @@ tab_ponctuels <- sirene_agglo_tab %>%
   transmute(
     SIRET = siret,
     SIREN = siren,
-    Raison_sociale = normalize_enseigne(denominatio),
+    Raison_sociale = Raison_sociale_calc,
     Nom_usuel = Nom_usuel_calc,
     Nom_usuel_source = Nom_usuel_source,
     Nom_usuel_alternatif = Nom_usuel_alternatif,
     Date_changement_nom = as.character(as.Date(NA)),
-    Flag_changement_nom = FALSE,
+    Flag_changement_nom = !is.na(Nom_usuel_alternatif),
     Siege = !is.na(siret_du_si) & siret == as.character(siret_du_si),
     Appartient_groupe = !is.na(Nom_groupe_calc),
     Nom_groupe = Nom_groupe_calc,
@@ -1344,7 +1389,8 @@ source_map <- c(
   Siege = "SIRENE", Appartient_groupe = "SIRENE + mapping groupe",
   Nom_groupe = "SIRENE + mapping groupe",
   Date_creation = "SIRENE", Drive_accole = "crossref drives / fallback",
-  Date_creation_drive = "A completer", Drive_deporte = "crossref drives / fallback",
+  Date_creation_drive = "crossref drives / fallback",
+  Drive_deporte = "crossref drives / fallback",
   Code_NAF = "SIRENE", Libelle_NAF = "SIRENE", Adresse = "SIRENE",
   Code_IRIS = "INSEE IRIS + jointure spatiale", Zone_etude = "Traitement interne"
 )
@@ -1352,18 +1398,18 @@ source_map <- c(
 rule_map <- c(
   SIRET = "Copie directe de siret",
   SIREN = "Copie directe de siren",
-  Raison_sociale = "normalize_enseigne(denominatio)",
-  Nom_usuel = "enseigne_de sinon denominatio",
-  Nom_usuel_source = "enseigne_de ou denominatio selon disponibilite",
+  Raison_sociale = "coalesce(denominatio, denominatio.*) puis normalize_enseigne(...)",
+  Nom_usuel = "coalesce(enseigne_de, enseigne_de.*) sinon raison sociale",
+  Nom_usuel_source = "enseigne_de si present sinon denominatio",
   Nom_usuel_alternatif = "denomination alternative si differente",
   Date_changement_nom = "Placeholder (source externe future)",
-  Flag_changement_nom = "FALSE par defaut",
+  Flag_changement_nom = "TRUE si nom usuel alternatif detecte",
   Siege = "siret == siret_du_si",
   Appartient_groupe = "Nom_groupe non NA",
-  Nom_groupe = "groupe_de_l sinon mapping enseigne->groupe",
+  Nom_groupe = "groupe_de_l nettoye sinon mapping enseigne->groupe",
   Date_creation = "as_date_flexible(date_de_cre)",
   Drive_accole = "drive_trouve et type drive contient accole/voiture",
-  Date_creation_drive = "date_creation_drive si disponible sinon NA",
+  Date_creation_drive = "date drive issue du crossref si disponible sinon NA",
   Drive_deporte = "drive_trouve et non drive_accole",
   Code_NAF = "normalize_naf(...)",
   Libelle_NAF = "Copie nomenclatur",
@@ -1387,6 +1433,14 @@ dico_base <- tibble(
 
 dico_extra <- tibble::tribble(
   ~variable, ~type, ~description, ~source, ~regle_construction,
+  "1er_quartile_euro", "numeric", "Premier quartile du revenu par IRIS", "INSEE IRIS", "Variable source IRIS",
+  "Mediane_euro", "numeric", "Revenu median par IRIS", "INSEE IRIS", "Variable source IRIS",
+  "3e_quartile_euro", "numeric", "Troisieme quartile du revenu par IRIS", "INSEE IRIS", "Variable source IRIS",
+  "Pct_actifs", "numeric", "Part des actifs parmi les 15-64 ans", "INSEE IRIS", "Actifs_15-64_ans2 / Population_15-64_ans",
+  "Pct_Menages_enfants", "numeric", "Part des menages avec enfants", "INSEE IRIS", "(Familles_princ_avec_enfants + Familles_monoparentales) / Menages",
+  "Pct_Menages_voiture", "numeric", "Part des menages avec au moins une voiture", "INSEE IRIS", "Menages_une_voiture / Menages",
+  "Pct_Cadres_sup", "numeric", "Part des cadres superieurs parmi les 15 ans et plus", "INSEE IRIS", "Pop_15_ansplus_Cadres_Prof_intel_sup / Population_15_ans_ou_plus",
+  "Densite_pop", "numeric", "Densite de population", "INSEE IRIS + geometrie", "Population / surface IRIS (km2)",
   "Nb_pdv_2020", "numeric", "Nombre de super/hyper/superette par IRIS (2020)", "SIRENE 2020 + jointure IRIS", "Comptage par Code_IRIS",
   "Nb_pdv_2025", "numeric", "Nombre de super/hyper/superette par IRIS (2025)", "SIRENE 2025 + jointure IRIS", "Comptage par Code_IRIS",
   "Nb_drives_2025", "numeric", "Nombre de drives par IRIS (2025)", "crossref drives + jointure IRIS", "Comptage des points avec drive",
@@ -1397,6 +1451,8 @@ dico_extra <- tibble::tribble(
   "couverture_pct_2020", "numeric", "Part de surface IRIS couverte (2020)", "OTP/fallback + calcul surfacique", "intersect_area / iris_area * 100",
   "couverture_pct_2025", "numeric", "Part de surface IRIS couverte (2025)", "OTP/fallback + calcul surfacique", "intersect_area / iris_area * 100",
   "couverture_pct", "numeric", "Alias 2025 de la couverture", "Traitement interne", "Copie de couverture_pct_2025",
+  "moran_I", "numeric", "Indice global de Moran (accessibilite primaire)", "spdep + voisinage IRIS", "moran.test sur Nb_pdv_access_primaire_voiture",
+  "moran_p_value", "numeric", "P-value associee a l'indice de Moran", "spdep + voisinage IRIS", "p.value du test de Moran",
   "HHI_2020", "numeric", "Indice Herfindahl-Hirschman par enseigne (2020)", "SIRENE 2020", "Somme des parts au carre",
   "HHI_2025", "numeric", "Indice Herfindahl-Hirschman par enseigne (2025)", "SIRENE 2025", "Somme des parts au carre",
   "score_total_A", "numeric", "Score classement A (socio-demo uniquement)", "Traitement interne", "Agregation ponderee variables tache 1.2",
