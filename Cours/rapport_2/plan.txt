@@ -6,7 +6,7 @@ Modifier
 3. Refaire les seuils d’isochrones pour petit magasin bio (marche/vélo/TC d’abord): implantationBIO.Rmd (line 795), implantationBIO.Rmd (line 1483). Fait
 4. Renommer toutes les mentions “tâche 1.x / PARTIE 1.x” en logique rapport 2: implantationBIO.Rmd (line 910), implantationBIO.Rmd (line 1862), implantationBIO.Rmd (line 4219). Fait
 5. Mettre à jour les exports CSV en rapport2 (au lieu de rapport1 et suffixes v4): implantationBIO.Rmd (line 1326), implantationBIO.Rmd (line 1467), implantationBIO.Rmd (line 5226). Fait
-6. Refaire la logique concurrence/couverture/scoring avec variables BIO (et non “supermarché généraliste”): implantationBIO.Rmd (line 4126).
+6. Refaire la logique concurrence/couverture/scoring avec variables BIO (et non “supermarché généraliste”): implantationBIO.Rmd (line 4126). Fait
 7. Refaire tout le texte d’analyse encore orienté supermarché (quasi toutes les sections 3→11): ex. implantationBIO.Rmd (line 1950), implantationBIO.Rmd (line 2481), implantationBIO.Rmd (line 5307), implantationBIO.Rmd (line 5415). Fait
 8. Refaire la partie CA avec référentiel BIO (pas CA_super_hyper_pappers_nombres.csv): implantationBIO.Rmd (line 4407). Fait
 

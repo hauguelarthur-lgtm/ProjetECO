@@ -252,8 +252,12 @@ library(knitr)
 library(kableExtra)
 library(stringr)
 library(ggplot2)
+library(tmap)
 if (requireNamespace("plotly", quietly = TRUE)) {
   library(plotly)
+}
+if (requireNamespace("tmaptools", quietly = TRUE)) {
+  library(tmaptools)
 }
 
 knitr::opts_chunk$set(
@@ -936,7 +940,7 @@ build_multiformat_isochrones <- function(
 
 ```{r}
 # ---------------------------
-# Chemins relatifs et création dossier processed
+# Chemins relatifs et creation dossier processed
 # ---------------------------
 cours_dir_candidates <- c("Cours", ".", "..", "../..")
 cours_dir <- cours_dir_candidates[
@@ -945,15 +949,49 @@ cours_dir <- cours_dir_candidates[
 
 if (is.na(cours_dir)) stop("Dossier Cours/data/raw introuvable depuis: ", getwd())
 
-raw_dir <- file.path(cours_dir, "data", "raw")
-processed_dir <- file.path(cours_dir, "data", "processed")
+report2_dir_candidates <- c(
+  file.path(cours_dir, "rapport_2"),
+  "Cours/rapport_2",
+  "rapport_2",
+  "."
+)
+report2_dir <- report2_dir_candidates[
+  dir.exists(file.path(report2_dir_candidates, "data"))
+][1]
 
-# Créer le dossier si nécessaire
+raw_dir_legacy <- file.path(cours_dir, "data", "raw")
+processed_dir_legacy <- file.path(cours_dir, "data", "processed")
+
+raw_dir_report2 <- if (!is.na(report2_dir)) file.path(report2_dir, "data", "raw") else NA_character_
+processed_dir_report2 <- if (!is.na(report2_dir)) file.path(report2_dir, "data", "processed") else NA_character_
+
+raw_dir <- raw_dir_legacy
+processed_dir <- if (!is.na(processed_dir_report2)) processed_dir_report2 else processed_dir_legacy
+
+raw_dirs_search <- unique(na.omit(c(raw_dir_report2, raw_dir_legacy, file.path(cours_dir, "data", "actif"), file.path(cours_dir, "data"))))
+processed_dirs_search <- unique(na.omit(c(processed_dir_report2, processed_dir_legacy)))
+
+first_existing_path <- function(paths) {
+  hit <- paths[file.exists(paths)][1]
+  if (length(hit) == 0 || is.na(hit)) NA_character_ else hit
+}
+
+first_existing_in_dirs <- function(filename, dirs = raw_dirs_search) {
+  first_existing_path(file.path(dirs, filename))
+}
+
+# Creer le dossier si necessaire
 if (!dir.exists(processed_dir)) {
   dir.create(processed_dir, recursive = TRUE)
 }
 
 message("Dossier Cours utilise: ", cours_dir)
+if (!is.na(report2_dir)) {
+  message("Dossier rapport_2 detecte: ", report2_dir)
+  message("Raw rapport_2: ", raw_dir_report2)
+}
+message("Raw legacy: ", raw_dir_legacy)
+message("Processed output: ", processed_dir)
 ```
 
 PARTIE 2.1: Vue d'ensemble de la zone d’étude (agglo complete + zone cible Nord)
@@ -968,42 +1006,262 @@ Row {data-height=620}
 # ---------------------------
 
 # IRIS
-iris_shp <- st_read(
-  dsn = raw_dir,
-  layer = "georef-france-iris-millesime"
-)
-
-# SIRENE
-sirene_layer <- "dataseed-sirene-1"
-sirene_dsn_candidates <- c(
-  file.path(cours_dir, "data", "actif"),
-  file.path(cours_dir, "data", "raw"),
-  file.path(cours_dir, "data")
-)
-sirene_dsn <- sirene_dsn_candidates[
-  file.exists(file.path(sirene_dsn_candidates, paste0(sirene_layer, ".shp")))
+iris_layer <- "georef-france-iris-millesime"
+iris_dsn_candidates <- raw_dirs_search
+iris_dsn <- iris_dsn_candidates[
+  file.exists(file.path(iris_dsn_candidates, paste0(iris_layer, ".shp")))
 ][1]
-
-if (is.na(sirene_dsn)) {
-  stop("Shapefile ", sirene_layer, ".shp introuvable dans actif/raw/data.")
+if (is.na(iris_dsn)) {
+  stop("Shapefile ", iris_layer, ".shp introuvable dans les repertoires raw candidates.")
 }
-
-message("Source SIRENE utilisee: ", sirene_dsn, "/", sirene_layer, ".shp")
-
-sirene_shp <- st_read(
-  dsn = sirene_dsn,
-  layer = sirene_layer,
+iris_shp <- st_read(
+  dsn = iris_dsn,
+  layer = iris_layer,
   quiet = TRUE
 )
+message("Source IRIS utilisee: ", iris_dsn, "/", iris_layer, ".shp")
 
-message("Shapefile SIRENE charge avec succès: ", nrow(sirene_shp), " établissements")
+# Communes (definies ici pour piloter aussi le fallback SIRENE BIO rapport_2)
+communes_nord_norm <- c(
+  "GRENOBLE", "MEYLAN", "LATRONCHE", "CORENC",
+  "SAINTMARTINLEVINOUX", "SAINTEGREVE"
+)
+communes_ouest_norm <- c("SASSENAGE", "FONTAINE", "SEYSSINETPARISET", "SEYSSINS")
+communes_sudest_norm <- c("ECHIROLLES", "EYBENS", "SAINTMARTINDHERES", "GIERES")
+communes_agglo_norm <- unique(c(communes_nord_norm, communes_ouest_norm, communes_sudest_norm))
+communes_zone_cible_norm <- communes_nord_norm
+
+iris_shp <- iris_shp %>% mutate(commune_norm = normalize_commune(com_name))
+iris_agglo_bbox_2154 <- st_bbox(
+  st_transform(
+    iris_shp %>% filter(commune_norm %in% communes_agglo_norm),
+    2154
+  )
+)
+
+safe_read_semicolon <- function(path, col_select = NULL) {
+  if (!is.null(col_select) && length(col_select) > 0) {
+    try_sel <- tryCatch(
+      suppressMessages(readr::read_delim(
+        path,
+        delim = ";",
+        col_types = readr::cols(.default = readr::col_character()),
+        col_select = dplyr::any_of(col_select),
+        show_col_types = FALSE,
+        locale = readr::locale(encoding = "UTF-8")
+      )),
+      error = function(e) NULL
+    )
+    if (!is.null(try_sel)) return(try_sel)
+  }
+  suppressMessages(readr::read_delim(
+    path,
+    delim = ";",
+    col_types = readr::cols(.default = readr::col_character()),
+    show_col_types = FALSE,
+    locale = readr::locale(encoding = "UTF-8")
+  ))
+}
+
+ensure_sirene_geo_csv <- function(raw_dir_r2) {
+  if (is.na(raw_dir_r2) || !dir.exists(raw_dir_r2)) return(NA_character_)
+  sirene_dir <- file.path(raw_dir_r2, "sirene")
+  if (!dir.exists(sirene_dir)) return(NA_character_)
+
+  csv_candidates <- c(
+    file.path(sirene_dir, "GeolocalisationEtablissement_Sirene_pour_etudes_statistiques_utf8.csv"),
+    file.path(sirene_dir, "sirene_geo_etudes.csv")
+  )
+  csv_hit <- first_existing_path(csv_candidates)
+  if (!is.na(csv_hit)) return(csv_hit)
+
+  zip_path <- file.path(sirene_dir, "sirene_geo_etudes.zip")
+  if (!file.exists(zip_path)) return(NA_character_)
+
+  message("Extraction SIRENE geolocalisation depuis ", zip_path)
+  extracted <- FALSE
+  if (nzchar(Sys.which("bsdtar"))) {
+    try({
+      system2(
+        "bsdtar",
+        c("-xf", normalizePath(zip_path), "-C", normalizePath(sirene_dir)),
+        stdout = TRUE,
+        stderr = TRUE
+      )
+    }, silent = TRUE)
+    extracted <- TRUE
+  } else {
+    try({
+      utils::unzip(zip_path, exdir = sirene_dir)
+    }, silent = TRUE)
+    extracted <- TRUE
+  }
+
+  if (!extracted) return(NA_character_)
+  first_existing_path(csv_candidates)
+}
+
+build_sirene_bio_from_report2 <- function(raw_dir_r2, iris_sf, bbox_2154) {
+  if (is.na(raw_dir_r2) || !dir.exists(raw_dir_r2)) return(NULL)
+
+  operateurs_path <- first_existing_path(c(
+    file.path(raw_dir_r2, "professionnels_bio", "01_operateursbio.csv_operateursbio.csv"),
+    file.path(raw_dir_r2, "professionnels_bio", "operateursbio.csv")
+  ))
+  if (is.na(operateurs_path)) {
+    message("Operateurs BIO introuvables dans rapport_2/data/raw/professionnels_bio.")
+    return(NULL)
+  }
+
+  geo_csv_path <- ensure_sirene_geo_csv(raw_dir_r2)
+  if (is.na(geo_csv_path)) {
+    message("SIRENE geo etudes non disponible en CSV (zip/parquet non exploitable sans extraction/lib parquet).")
+    return(NULL)
+  }
+
+  ops_raw <- safe_read_semicolon(operateurs_path)
+  names(ops_raw) <- tolower(names(ops_raw))
+  siret_ops_col <- names(ops_raw)[str_detect(names(ops_raw), "^siret$|siret14|num_siret")][1]
+  denom_ops_col <- names(ops_raw)[str_detect(names(ops_raw), "denomination|raison|nom")][1]
+  activ_ops_col <- names(ops_raw)[str_detect(names(ops_raw), "activites|activite")][1]
+  date_ops_col <- names(ops_raw)[str_detect(names(ops_raw), "dateengagement|date_engagement|date")][1]
+  if (is.na(siret_ops_col)) return(NULL)
+
+  ops <- tibble::tibble(
+    siret = str_replace_all(as.character(ops_raw[[siret_ops_col]]), "[^0-9]", ""),
+    denominatio = if (!is.na(denom_ops_col)) as.character(ops_raw[[denom_ops_col]]) else NA_character_,
+    enseigne_de = if (!is.na(denom_ops_col)) as.character(ops_raw[[denom_ops_col]]) else NA_character_,
+    activites_bio = if (!is.na(activ_ops_col)) as.character(ops_raw[[activ_ops_col]]) else NA_character_,
+    dateengagement_bio = if (!is.na(date_ops_col)) as.character(ops_raw[[date_ops_col]]) else NA_character_
+  ) %>%
+    filter(!is.na(siret), nchar(siret) == 14)
+
+  if (!is.na(activ_ops_col)) {
+    ops <- ops %>%
+      filter(str_detect(activites_bio, regex("DISTRIBUTION|PREPARATION|PR[ÉE]PARATION|RESTAURATION|VENTE", ignore_case = TRUE)))
+  }
+  ops <- ops %>% distinct(siret, .keep_all = TRUE)
+  if (nrow(ops) == 0) return(NULL)
+
+  geo_raw <- safe_read_semicolon(
+    geo_csv_path,
+    col_select = c("siret", "x", "y", "x_longitude", "y_latitude")
+  )
+  names(geo_raw) <- tolower(names(geo_raw))
+  siret_geo_col <- names(geo_raw)[str_detect(names(geo_raw), "^siret$|siret14|num_siret")][1]
+  x_col <- names(geo_raw)[names(geo_raw) == "x"][1]
+  y_col <- names(geo_raw)[names(geo_raw) == "y"][1]
+  lon_col <- names(geo_raw)[str_detect(names(geo_raw), "x_longitude|longitude|\\blon\\b")][1]
+  lat_col <- names(geo_raw)[str_detect(names(geo_raw), "y_latitude|latitude|\\blat\\b")][1]
+  if (is.na(siret_geo_col)) return(NULL)
+
+  geo <- tibble::tibble(
+    siret = str_replace_all(as.character(geo_raw[[siret_geo_col]]), "[^0-9]", ""),
+    x_num = if (!is.na(x_col)) suppressWarnings(as.numeric(str_replace_all(as.character(geo_raw[[x_col]]), ",", "."))) else NA_real_,
+    y_num = if (!is.na(y_col)) suppressWarnings(as.numeric(str_replace_all(as.character(geo_raw[[y_col]]), ",", "."))) else NA_real_,
+    lon_num = if (!is.na(lon_col)) suppressWarnings(as.numeric(str_replace_all(as.character(geo_raw[[lon_col]]), ",", "."))) else NA_real_,
+    lat_num = if (!is.na(lat_col)) suppressWarnings(as.numeric(str_replace_all(as.character(geo_raw[[lat_col]]), ",", "."))) else NA_real_
+  ) %>%
+    filter(!is.na(siret), nchar(siret) == 14) %>%
+    distinct(siret, .keep_all = TRUE)
+
+  has_xy <- sum(stats::complete.cases(geo[, c("x_num", "y_num")])) > 0
+  has_lonlat <- sum(stats::complete.cases(geo[, c("lon_num", "lat_num")])) > 0
+  if (has_xy) {
+    geo <- geo %>%
+      filter(
+        !is.na(x_num), !is.na(y_num),
+        x_num >= bbox_2154[["xmin"]] - 30000,
+        x_num <= bbox_2154[["xmax"]] + 30000,
+        y_num >= bbox_2154[["ymin"]] - 30000,
+        y_num <= bbox_2154[["ymax"]] + 30000
+      )
+  }
+
+  geo_bio <- inner_join(geo, ops, by = "siret")
+  if (nrow(geo_bio) == 0) return(NULL)
+
+  pts <- NULL
+  if (sum(stats::complete.cases(geo_bio[, c("x_num", "y_num")])) > 0) {
+    pts <- geo_bio %>%
+      filter(!is.na(x_num), !is.na(y_num)) %>%
+      st_as_sf(coords = c("x_num", "y_num"), crs = 2154, remove = FALSE)
+  } else if (has_lonlat && sum(stats::complete.cases(geo_bio[, c("lon_num", "lat_num")])) > 0) {
+    pts <- geo_bio %>%
+      filter(!is.na(lon_num), !is.na(lat_num)) %>%
+      st_as_sf(coords = c("lon_num", "lat_num"), crs = 4326, remove = FALSE) %>%
+      st_transform(2154)
+  }
+
+  if (is.null(pts) || nrow(pts) == 0) return(NULL)
+  pts <- st_transform(pts, st_crs(iris_sf))
+
+  joined <- st_join(
+    pts,
+    iris_sf %>% dplyr::select(iris_code, com_name),
+    left = TRUE
+  )
+  pts$commune_de_ <- as.character(st_drop_geometry(joined)$com_name)
+  pts$code_postal <- NA_character_
+  pts$adresse_de_ <- NA_character_
+  pts$numero_de_v <- NA_character_
+  pts$type_de_voi <- NA_character_
+  pts$libelle_de_ <- NA_character_
+  pts$siret_du_si <- NA_character_
+  pts$date_de_cre <- NA_character_
+  pts$nomenclatur <- "BIO certifie (operateurs)"
+  pts$groupe_de_l <- NA_character_
+  pts$activite_pr.1 <- "4729Z"
+  pts$classe_de_l <- paste("BIO", dplyr::coalesce(as.character(pts$activites_bio), "OPERATEUR"))
+  pts$siren <- substr(as.character(pts$siret), 1, 9)
+  pts$nic <- substr(as.character(pts$siret), 10, 14)
+  pts$source_bio <- "rapport2_sirene_geo_operateursbio"
+  pts
+}
+
+# SIRENE
+sirene_source <- "legacy_shapefile"
+sirene_shp <- build_sirene_bio_from_report2(
+  raw_dir_r2 = raw_dir_report2,
+  iris_sf = iris_shp,
+  bbox_2154 = iris_agglo_bbox_2154
+)
+
+if (!is.null(sirene_shp) && nrow(sirene_shp) > 0) {
+  sirene_source <- "rapport2_sirene_geo_operateursbio"
+  message("Source SIRENE BIO utilisee: ", sirene_source, " (", nrow(sirene_shp), " points).")
+} else {
+  sirene_layer <- "dataseed-sirene-1"
+  sirene_dsn_candidates <- unique(c(
+    raw_dirs_search,
+    file.path(cours_dir, "data", "actif"),
+    file.path(cours_dir, "data")
+  ))
+  sirene_dsn <- sirene_dsn_candidates[
+    file.exists(file.path(sirene_dsn_candidates, paste0(sirene_layer, ".shp")))
+  ][1]
+
+  if (is.na(sirene_dsn)) {
+    stop("Shapefile ", sirene_layer, ".shp introuvable dans les repertoires raw candidates.")
+  }
+
+  message("Source SIRENE utilisee (fallback): ", sirene_dsn, "/", sirene_layer, ".shp")
+
+  sirene_shp <- st_read(
+    dsn = sirene_dsn,
+    layer = sirene_layer,
+    quiet = TRUE
+  )
+}
+
+message("SIRENE charge avec succès: ", nrow(sirene_shp), " établissements")
 
 # CSV avec plus de détails (optionnel selon les jeux de donnees disponibles)
-sirene_csv_candidates <- c(
-  file.path(cours_dir, "data", "actif", "economicref-france-sirene-v3.csv"),
-  file.path(cours_dir, "data", "raw", "economicref-france-sirene-v3.csv"),
+sirene_csv_candidates <- unique(c(
+  file.path(raw_dirs_search, "economicref-france-sirene-v3.csv"),
+  file.path(raw_dirs_search, "sirene", "economicref-france-sirene-v3.csv"),
   file.path(cours_dir, "data", "economicref-france-sirene-v3.csv")
-)
+))
 sirene_csv_path <- sirene_csv_candidates[file.exists(sirene_csv_candidates)][1]
 
 if (!is.na(sirene_csv_path)) {
@@ -1064,6 +1322,190 @@ communes_zone_cible_norm <- communes_nord_norm
 
 # Normaliser les noms de colonnes/communes
 names(sirene_shp) <- tolower(names(sirene_shp))
+
+append_enseignes_bio_csv <- function(base_sf, raw_dir_r2) {
+  if (is.na(raw_dir_r2) || !dir.exists(raw_dir_r2)) return(base_sf)
+
+  to_siret14_chr <- function(x) {
+    x_chr <- str_squish(as.character(x))
+    x_num <- suppressWarnings(as.numeric(str_replace_all(x_chr, ",", ".")))
+    x_num_txt <- ifelse(!is.na(x_num), format(x_num, scientific = FALSE, trim = TRUE), NA_character_)
+    x_digits_num <- str_replace_all(x_num_txt, "[^0-9]", "")
+    x_digits_raw <- str_replace_all(x_chr, "[^0-9]", "")
+    x_digits <- ifelse(!is.na(x_digits_num) & x_digits_num != "", x_digits_num, x_digits_raw)
+    x_digits[x_digits == ""] <- NA_character_
+    out <- str_pad(str_sub(x_digits, 1, 14), width = 14, side = "left", pad = "0")
+    out[is.na(x_digits)] <- NA_character_
+    out
+  }
+
+  csv_path <- first_existing_path(c(
+    file.path(raw_dir_r2, "sirene", "enseignesBIO.csv"),
+    file.path(raw_dir_r2, "enseignesBIO.csv")
+  ))
+  if (is.na(csv_path) || !file.exists(csv_path)) return(base_sf)
+
+  extra_raw <- tryCatch(
+    suppressMessages(readr::read_csv(csv_path, show_col_types = FALSE, locale = readr::locale(encoding = "UTF-8"))),
+    error = function(e) NULL
+  )
+  if (is.null(extra_raw)) {
+    extra_raw <- tryCatch(
+      suppressMessages(readr::read_delim(
+        csv_path,
+        delim = ";",
+        show_col_types = FALSE,
+        col_types = readr::cols(.default = readr::col_character()),
+        locale = readr::locale(encoding = "UTF-8")
+      )),
+      error = function(e) NULL
+    )
+  }
+  if (is.null(extra_raw) || nrow(extra_raw) == 0) return(base_sf)
+
+  names(extra_raw) <- tolower(names(extra_raw))
+  nom_col <- names(extra_raw)[str_detect(names(extra_raw), "^nom$|enseigne|denomination")][1]
+  ville_col <- names(extra_raw)[str_detect(names(extra_raw), "^ville$|commune")][1]
+  type_col <- names(extra_raw)[str_detect(names(extra_raw), "^type$|activite")][1]
+  siren_col <- names(extra_raw)[str_detect(names(extra_raw), "^siren$")][1]
+  siret_col <- names(extra_raw)[str_detect(names(extra_raw), "^siret$|siret14")][1]
+  lon_col <- names(extra_raw)[str_detect(names(extra_raw), "longitude|\\blon\\b|xlong")][1]
+  lat_col <- names(extra_raw)[str_detect(names(extra_raw), "latitude|\\blat\\b|ylat")][1]
+  ouvert_col <- names(extra_raw)[str_detect(names(extra_raw), "ouvert")][1]
+
+  if (is.na(nom_col) || is.na(ville_col) || is.na(lon_col) || is.na(lat_col)) {
+    message("enseignesBIO.csv detecte mais colonnes minimales absentes (Nom, Ville, Longitude, Latitude).")
+    return(base_sf)
+  }
+
+  extra_tbl <- tibble::tibble(
+    nom_src = as.character(extra_raw[[nom_col]]),
+    ville_src = as.character(extra_raw[[ville_col]]),
+    type_src = if (!is.na(type_col)) as.character(extra_raw[[type_col]]) else NA_character_,
+    siren_src = if (!is.na(siren_col)) str_replace_all(as.character(extra_raw[[siren_col]]), "[^0-9]", "") else NA_character_,
+    siret_src = if (!is.na(siret_col)) to_siret14_chr(extra_raw[[siret_col]]) else NA_character_,
+    lon = suppressWarnings(as.numeric(str_replace_all(as.character(extra_raw[[lon_col]]), ",", "."))),
+    lat = suppressWarnings(as.numeric(str_replace_all(as.character(extra_raw[[lat_col]]), ",", "."))),
+    ouvert_txt = if (!is.na(ouvert_col)) str_to_lower(str_squish(as.character(extra_raw[[ouvert_col]]))) else NA_character_
+  ) %>%
+    mutate(
+      siret_src = ifelse(!is.na(siret_src) & nchar(siret_src) == 14, siret_src, NA_character_),
+      siren_src = ifelse(!is.na(siren_src) & nchar(siren_src) == 9, siren_src, ifelse(!is.na(siret_src), substr(siret_src, 1, 9), NA_character_)),
+      keep_open = is.na(ouvert_txt) | ouvert_txt == "" | ouvert_txt == "na" | ouvert_txt == "oui"
+    ) %>%
+    filter(
+      keep_open,
+      !is.na(nom_src), str_squish(nom_src) != "",
+      !is.na(ville_src), str_squish(ville_src) != "",
+      !is.na(lon), !is.na(lat)
+    ) %>%
+    mutate(
+      nom_norm = normalize_commune(nom_src),
+      ville_norm = normalize_commune(ville_src),
+      key_loc = paste(nom_norm, ville_norm, round(lon, 4), round(lat, 4), sep = "|")
+    )
+
+  if (nrow(extra_tbl) == 0) {
+    message("enseignesBIO.csv charge, mais aucune ligne retenue apres filtre Ouvert (oui/NA).")
+    return(base_sf)
+  }
+
+  extra_tbl <- bind_rows(
+    extra_tbl %>% filter(!is.na(siret_src)) %>% distinct(siret_src, .keep_all = TRUE),
+    extra_tbl %>% filter(is.na(siret_src)) %>% distinct(key_loc, .keep_all = TRUE)
+  )
+
+  if (!"siret" %in% names(base_sf)) base_sf$siret <- NA_character_
+  if (!"enseigne_de" %in% names(base_sf)) base_sf$enseigne_de <- NA_character_
+  if (!"denominatio" %in% names(base_sf)) base_sf$denominatio <- NA_character_
+  if (!"commune_de_" %in% names(base_sf)) base_sf$commune_de_ <- NA_character_
+  if (!"source_bio" %in% names(base_sf)) base_sf$source_bio <- "source_sirene_standard"
+  if (!"activites_bio" %in% names(base_sf)) base_sf$activites_bio <- NA_character_
+
+  base_ll <- st_transform(base_sf, 4326)
+  base_coords <- suppressWarnings(st_coordinates(st_centroid(st_geometry(base_ll))))
+  base_tbl <- st_drop_geometry(base_ll) %>%
+    mutate(
+      siret_clean = to_siret14_chr(siret),
+      nom_base = coalesce_chr(., c("enseigne_de", "denominatio")),
+      ville_base = as.character(commune_de_),
+      key_loc = paste(
+        normalize_commune(nom_base),
+        normalize_commune(ville_base),
+        round(base_coords[, "X"], 4),
+        round(base_coords[, "Y"], 4),
+        sep = "|"
+      )
+    )
+
+  base_siret_set <- unique(base_tbl$siret_clean[!is.na(base_tbl$siret_clean) & nchar(base_tbl$siret_clean) == 14])
+  base_loc_set <- unique(base_tbl$key_loc[!is.na(base_tbl$key_loc) & str_squish(base_tbl$key_loc) != ""])
+
+  extra_tbl <- extra_tbl %>%
+    filter(
+      !( !is.na(siret_src) & siret_src %in% base_siret_set ),
+      !( key_loc %in% base_loc_set )
+    )
+
+  if (nrow(extra_tbl) == 0) {
+    message("enseignesBIO.csv: aucun ajout (doublons detectes avec les enseignes existantes).")
+    return(base_sf)
+  }
+
+  extra_sf <- extra_tbl %>%
+    mutate(
+      siret = siret_src,
+      siren = siren_src,
+      nic = ifelse(!is.na(siret_src), substr(siret_src, 10, 14), NA_character_),
+      enseigne_de = nom_src,
+      denominatio = nom_src,
+      commune_de_ = ville_src,
+      activites_bio = type_src,
+      activite_pr.1 = "4729Z",
+      classe_de_l = paste("BIO CSV", dplyr::coalesce(type_src, "ENSEIGNE")),
+      code_postal = NA_character_,
+      adresse_de_ = NA_character_,
+      numero_de_v = NA_character_,
+      type_de_voi = NA_character_,
+      libelle_de_ = NA_character_,
+      siret_du_si = NA_character_,
+      date_de_cre = NA_character_,
+      nomenclatur = "BIO enseignes CSV",
+      groupe_de_l = NA_character_,
+      source_bio = "enseignesBIO_csv"
+    ) %>%
+    st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = FALSE) %>%
+    st_transform(st_crs(base_sf))
+
+  for (col in setdiff(names(base_sf), names(extra_sf))) {
+    extra_sf[[col]] <- NA
+  }
+  for (col in setdiff(names(extra_sf), names(base_sf))) {
+    base_sf[[col]] <- NA
+  }
+
+  out <- bind_rows(base_sf, extra_sf[, names(base_sf)])
+  if ("siret" %in% names(out)) {
+    out <- out %>%
+      mutate(
+        siret_norm_tmp = to_siret14_chr(siret),
+        row_origin_tmp = ifelse("source_bio" %in% names(.), as.integer(source_bio == "enseignesBIO_csv"), 0L)
+      )
+
+    out_non_na <- out %>%
+      filter(!is.na(siret_norm_tmp)) %>%
+      arrange(row_origin_tmp) %>%
+      distinct(siret_norm_tmp, .keep_all = TRUE)
+    out_na <- out %>% filter(is.na(siret_norm_tmp))
+    out <- bind_rows(out_non_na, out_na) %>%
+      dplyr::select(-any_of(c("siret_norm_tmp", "row_origin_tmp")))
+  }
+
+  message("enseignesBIO.csv: ", nrow(extra_sf), " enseignes ajoutees apres filtre Ouvert et dedoublonnage.")
+  out
+}
+
+sirene_shp <- append_enseignes_bio_csv(sirene_shp, raw_dir_report2)
 iris_shp <- iris_shp %>% mutate(commune_norm = normalize_commune(com_name))
 sirene_shp <- sirene_shp %>% mutate(commune_norm = normalize_commune(commune_de_))
 
@@ -1194,9 +1636,9 @@ sirene_agglo_tab$Code_IRIS <- st_drop_geometry(joined_agglo)$iris_code
 
 # Drives: priorite au crossref genere, fallback sur drives_grenoble.csv
 crossref_candidates <- c(
-  file.path(cours_dir, "data", "processed", "crossref_supermarches_drives_zone_v3.csv"),
-  file.path(cours_dir, "data", "processed", "crossref_supermarches_drives_zone.csv"),
-  file.path(cours_dir, "data", "processed", "crossref_supermarches_drives.csv")
+  file.path(processed_dirs_search, "crossref_supermarches_drives_zone_v3.csv"),
+  file.path(processed_dirs_search, "crossref_supermarches_drives_zone.csv"),
+  file.path(processed_dirs_search, "crossref_supermarches_drives.csv")
 )
 crossref_path <- crossref_candidates[file.exists(crossref_candidates)][1]
 
@@ -1227,8 +1669,8 @@ if (!is.na(crossref_path)) {
     } %>%
     distinct(siret, .keep_all = TRUE)
 } else {
-  fallback_drive_path <- file.path(cours_dir, "data", "raw", "drives_grenoble.csv")
-  if (file.exists(fallback_drive_path)) {
+  fallback_drive_path <- first_existing_path(file.path(raw_dirs_search, "drives_grenoble.csv"))
+  if (!is.na(fallback_drive_path) && file.exists(fallback_drive_path)) {
     message("crossref drives absent: tentative de fallback avec drives_grenoble.csv")
     drives_raw <- suppressMessages(readr::read_delim(
       fallback_drive_path,
@@ -1638,7 +2080,98 @@ Row {data-height=1000}
 9. [Grenoble Mag (2025), Congestion et vitesse moyenne](https://www.grenoblemag.com/article/2529/grenoble-12e-ville-francaise-la-plus-congestionnee-81-heures-perdues-dans-les-bouchons-en-2025)
 
 
-PARTIE 3.1: Cartographie du premier quartile et du revenu median
+PARTIE 3.1: Feature BIO certifie (operateurs + geolocalisation)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+### Carte feature BIO certifiee (2025)
+
+```{r}
+bio_feature_points <- sirene_zone_etude %>%
+  mutate(
+    activites_bio = if ("activites_bio" %in% names(.)) as.character(activites_bio) else "NA",
+    source_bio = if ("source_bio" %in% names(.)) as.character(source_bio) else "source_sirene_standard"
+  )
+
+bio_feature_points_plot <- separate_overlapping_points(bio_feature_points, offset_m = 20)
+
+tm_shape(iris_zone_etude) +
+  tm_borders(col = "grey65", lwd = 1) +
+  tm_fill(alpha = 0) +
+  tm_shape(bio_feature_points_plot) +
+  tm_symbols(
+    shape = "Type_PV",
+    shape.scale = tm_scale_categorical(values = TYPE_PV_SHAPES_TM),
+    fill = "#2D6A4F",
+    col = "#1B4332",
+    size = 0.45,
+    popup.vars = c("siret", "denominatio", "Type_PV", "activites_bio", "source_bio")
+  ) +
+  tm_layout(
+    title = "Feature BIO certifiee: points conserves 2025",
+    legend.outside = TRUE
+  )
+```
+
+Row {data-height=650}
+-----------------------------------------------------------------------
+
+### Repartition feature BIO par commune {data-width=50}
+
+```{r}
+bio_feature_commune_tbl <- bio_feature_points %>%
+  st_drop_geometry() %>%
+  mutate(commune = if ("commune_de_" %in% names(.)) as.character(commune_de_) else NA_character_) %>%
+  filter(!is.na(commune), str_squish(commune) != "") %>%
+  count(commune, sort = TRUE) %>%
+  rename(Nb_points = n)
+
+if (nrow(bio_feature_commune_tbl) == 0) {
+  bio_feature_commune_tbl <- tibble::tibble(Info = "Aucun point BIO dans la zone cible.")
+}
+
+render_scroll_table(
+  bio_feature_commune_tbl,
+  caption = "Points BIO 2025 par commune (zone Nord)",
+  height_px = 420
+)
+```
+
+### Repartition feature BIO par activite {data-width=50}
+
+```{r}
+bio_feature_activ_tbl <- bio_feature_points %>%
+  st_drop_geometry() %>%
+  mutate(activites_bio = if ("activites_bio" %in% names(.)) as.character(activites_bio) else NA_character_) %>%
+  filter(!is.na(activites_bio), str_squish(activites_bio) != "") %>%
+  count(activites_bio, sort = TRUE) %>%
+  rename(Nb_points = n)
+
+if (nrow(bio_feature_activ_tbl) == 0) {
+  bio_feature_activ_tbl <- tibble::tibble(Info = "Variable activites_bio non disponible sur la source courante.")
+}
+
+render_scroll_table(
+  bio_feature_activ_tbl,
+  caption = "Points BIO 2025 par activite (source operateurs BIO si disponible)",
+  height_px = 420
+)
+```
+
+Row {data-height=420}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+<div class="analysis-scroll-box">
+<p>Analyse à ajouter</p>
+</div>
+
+
+
+PARTIE 3.2: Cartographie du premier quartile et du revenu median
 =======================================================================
 
 ```{r}
@@ -1647,31 +2180,66 @@ PARTIE 3.1: Cartographie du premier quartile et du revenu median
 # -----------------------------
 
 # Donnes FILOSOFI pour remplacer les revenus nuls
-filo <- read.csv(
-  file.path(raw_dir, "BASE_TD_FILO_IRIS_2021_DISP.csv"),
-  sep = ";",
-  encoding = "Latin1"
-)
+filo_path <- first_existing_path(c(
+  file.path(raw_dirs_search, "BASE_TD_FILO_IRIS_2021_DISP.csv"),
+  file.path(raw_dirs_search, "insee", "BASE_TD_FILO_IRIS_2021_DISP.csv")
+))
+if (is.na(filo_path)) {
+  message("Fichier FILOSOFI introuvable: correction revenus via FILOSOFI ignoree.")
+  filo <- tibble::tibble(
+    Code_IRIS = character(),
+    DISP_Q121 = numeric(),
+    DISP_MED21 = numeric(),
+    DISP_Q321 = numeric()
+  )
+} else {
+  filo <- read.csv(
+    filo_path,
+    sep = ";",
+    encoding = "Latin1"
+  )
+}
 
 # Renommer le code en Code_IRIS
-colnames(filo)[colnames(filo) == "IRIS"] <- "Code_IRIS"
+if ("IRIS" %in% names(filo) && !"Code_IRIS" %in% names(filo)) {
+  colnames(filo)[colnames(filo) == "IRIS"] <- "Code_IRIS"
+}
 iris_zone_etude <- iris_zone_etude %>%
   rename(Code_IRIS = iris_code)
 
 # Garder seulement les variables a corriger
-filo <- filo[, c(
-  "Code_IRIS",
-  "DISP_Q121",
-  "DISP_MED21",
-  "DISP_Q321"
-)]
+filo <- filo %>%
+  dplyr::select(any_of(c(
+    "Code_IRIS",
+    "DISP_Q121",
+    "DISP_MED21",
+    "DISP_Q321"
+  ))) %>%
+  mutate(
+    Code_IRIS = as.character(Code_IRIS),
+    DISP_Q121 = suppressWarnings(as.numeric(gsub(",", ".", DISP_Q121))),
+    DISP_MED21 = suppressWarnings(as.numeric(gsub(",", ".", DISP_MED21))),
+    DISP_Q321 = suppressWarnings(as.numeric(gsub(",", ".", DISP_Q321)))
+  )
 
-filo$DISP_Q121 <- as.numeric(gsub(",", ".", filo$DISP_Q121))
-filo$DISP_MED21 <- as.numeric(gsub(",", ".", filo$DISP_MED21))
-filo$DISP_Q321 <- as.numeric(gsub(",", ".", filo$DISP_Q321))
+if (!all(c("Code_IRIS", "DISP_Q121", "DISP_MED21", "DISP_Q321") %in% names(filo))) {
+  filo <- tibble::tibble(
+    Code_IRIS = character(),
+    DISP_Q121 = numeric(),
+    DISP_MED21 = numeric(),
+    DISP_Q321 = numeric()
+  )
+}
 
 # Donnees iris isere avec certains revenus nuls
-iris_data <- read_excel(file.path(raw_dir, "iris_isere.xlsx"))
+iris_data_path <- first_existing_path(c(
+  file.path(raw_dirs_search, "iris_isere.xlsx"),
+  file.path(raw_dirs_search, "insee", "iris_isere.xlsx")
+))
+if (is.na(iris_data_path)) {
+  stop("Fichier iris_isere.xlsx introuvable dans les repertoires raw.")
+}
+iris_data <- read_excel(iris_data_path)
 colnames(iris_data)[colnames(iris_data) == "CODE_IRIS"] <- "Code_IRIS"
 
 # Conversion des codes IRIS en character
@@ -1784,10 +2352,6 @@ sirene_zone_etude_plot <- separate_overlapping_points(sirene_zone_etude, offset_
 
 
 ```{r}
-library(tmap)
-library(tmaptools)
-library(dplyr)
-
 # Mode interactif
 tmap_mode("view")
 tmap_options(
@@ -1984,7 +2548,7 @@ Row {data-height=180}
 ```{r}
 render_scroll_table(
   build_sources_placeholder(
-    famille = "Partie 3.1 - Revenus (Q1 et mediane)",
+    famille = "Partie 3.2 - Revenus (Q1 et mediane)",
     variables_txt = "1er_quartile_euro, Mediane_euro",
     utilite_txt = "Qualifier le pouvoir d'achat local pour estimer le potentiel de chiffre d'affaires."
   ),
@@ -1994,7 +2558,7 @@ render_scroll_table(
 ```
 
 
-PARTIE 3.2: Cartographie du troisième quartile du revenu et du pourcentage d'actifs parmi les 15–64 ans
+PARTIE 3.3: Cartographie du troisième quartile du revenu et du pourcentage d'actifs parmi les 15–64 ans
 =======================================================================
 
 Row {data-height=1000}
@@ -2031,7 +2595,7 @@ Row {data-height=180}
 ```{r}
 render_scroll_table(
   build_sources_placeholder(
-    famille = "Partie 3.2 - Q3 revenu et actifs",
+    famille = "Partie 3.3 - Q3 revenu et actifs",
     variables_txt = "3e_quartile_euro, Pct_actifs",
     utilite_txt = "Identifier les IRIS combinant revenus eleves et intensite d'activite favorable a la frequentation."
   ),
@@ -2040,7 +2604,7 @@ render_scroll_table(
 )
 ```
 
-PARTIE 3.3: Cartographie des parts de ménages avec enfants/ avec voiture
+PARTIE 3.4: Cartographie des parts de ménages avec enfants/ avec voiture
 =======================================================================
 
 Row {data-height=1000}
@@ -2076,7 +2640,7 @@ Row {data-height=180}
 ```{r}
 render_scroll_table(
   build_sources_placeholder(
-    famille = "Partie 3.3 - Menages et mobilite",
+    famille = "Partie 3.4 - Menages et mobilite",
     variables_txt = "Pct_Menages_enfants, Pct_Menages_voiture",
     utilite_txt = "Differencier potentiel de courses de stock (familles motorisees) et achats d'appoint."
   ),
@@ -2085,7 +2649,7 @@ render_scroll_table(
 )
 ```
 
-PARTIE 3.4: Cartographie de la part de cadres supérieurs et de la densité de la population
+PARTIE 3.5: Cartographie de la part de cadres supérieurs et de la densité de la population
 =======================================================================
 
 Row {data-height=1000}
@@ -2122,7 +2686,7 @@ Row {data-height=180}
 ```{r}
 render_scroll_table(
   build_sources_placeholder(
-    famille = "Partie 3.4 - Cadres et densite",
+    famille = "Partie 3.5 - Cadres et densite",
     variables_txt = "Pct_Cadres_sup, Densite_pop",
     utilite_txt = "Arbitrer entre potentiel de panier premium et masse critique de clientele locale."
   ),
@@ -2130,6 +2694,1694 @@ render_scroll_table(
   height_px = 200
 )
 ```
+
+
+PARTIE 3.6: Feature mobilite (stationnement + velo)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+```{r}
+parkings_path <- first_existing_path(c(
+  file.path(raw_dirs_search, "mobilite", "stationnement", "lieuxstationnements_lametro.csv")
+))
+velo_path <- first_existing_path(c(
+  file.path(raw_dirs_search, "mobilite", "velo", "pistes_49_communes.json"),
+  file.path(raw_dirs_search, "mobilite", "velo", "pistes_api_lametro.json")
+))
+
+if (!"Code_IRIS" %in% names(iris_zone_etude) && exists("iris_id_col") && iris_id_col %in% names(iris_zone_etude)) {
+  iris_zone_etude <- iris_zone_etude %>% mutate(Code_IRIS = as.character(.data[[iris_id_col]]))
+}
+
+parkings_zone <- iris_zone_etude[0, ] %>% mutate(nom = character(), nb_places = numeric(), type_ouvrage = character())
+if (!is.na(parkings_path) && file.exists(parkings_path)) {
+  parkings_raw <- suppressMessages(readr::read_delim(
+    parkings_path,
+    delim = ";",
+    col_types = readr::cols(.default = readr::col_character()),
+    show_col_types = FALSE,
+    locale = readr::locale(encoding = "UTF-8")
+  ))
+  names(parkings_raw) <- tolower(names(parkings_raw))
+  lon_col <- names(parkings_raw)[str_detect(names(parkings_raw), "^xlong$|longitude|\\blon\\b")][1]
+  lat_col <- names(parkings_raw)[str_detect(names(parkings_raw), "^ylat$|latitude|\\blat\\b")][1]
+  nom_col <- names(parkings_raw)[str_detect(names(parkings_raw), "^nom$|name")][1]
+  places_col <- names(parkings_raw)[str_detect(names(parkings_raw), "nb_places|places")][1]
+  ouvrage_col <- names(parkings_raw)[str_detect(names(parkings_raw), "type_ouvrage|type")][1]
+
+  if (!is.na(lon_col) && !is.na(lat_col)) {
+    parkings_zone <- tibble::tibble(
+      nom = if (!is.na(nom_col)) as.character(parkings_raw[[nom_col]]) else NA_character_,
+      nb_places = if (!is.na(places_col)) suppressWarnings(as.numeric(parkings_raw[[places_col]])) else NA_real_,
+      type_ouvrage = if (!is.na(ouvrage_col)) as.character(parkings_raw[[ouvrage_col]]) else NA_character_,
+      lon = suppressWarnings(as.numeric(str_replace_all(as.character(parkings_raw[[lon_col]]), ",", "."))),
+      lat = suppressWarnings(as.numeric(str_replace_all(as.character(parkings_raw[[lat_col]]), ",", ".")))
+    ) %>%
+      filter(!is.na(lon), !is.na(lat)) %>%
+      st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = FALSE) %>%
+      st_transform(st_crs(iris_zone_etude))
+
+    parkings_join <- st_join(
+      parkings_zone,
+      iris_zone_etude %>% select(Code_IRIS, iris_name),
+      left = FALSE
+    )
+    parkings_zone <- parkings_join
+  }
+}
+
+velo_zone <- iris_zone_etude[0, ]
+if (!is.na(velo_path) && file.exists(velo_path)) {
+  velo_try <- tryCatch(
+    sf::st_read(velo_path, quiet = TRUE),
+    error = function(e) NULL
+  )
+  if (!is.null(velo_try) && nrow(velo_try) > 0) {
+    velo_zone <- st_transform(velo_try, st_crs(iris_zone_etude))
+    velo_zone <- suppressWarnings(st_intersection(velo_zone, st_union(st_geometry(iris_zone_etude))))
+  }
+}
+
+parkings_cnt_iris <- parkings_zone %>%
+  st_drop_geometry() %>%
+  group_by(Code_IRIS) %>%
+  summarise(Nb_parkings_publics = n(), .groups = "drop")
+
+iris_mobilite <- iris_zone_etude %>%
+  dplyr::select(-any_of("Nb_parkings_publics")) %>%
+  left_join(parkings_cnt_iris, by = "Code_IRIS") %>%
+  mutate(Nb_parkings_publics = coalesce(as.integer(Nb_parkings_publics), 0L))
+
+parkings_zone_plot <- if (nrow(parkings_zone) > 0) separate_overlapping_points(parkings_zone, offset_m = 24) else parkings_zone
+
+map_mobilite_features <- tm_shape(iris_mobilite) +
+  tm_polygons(
+    col = "Nb_parkings_publics",
+    palette = "Blues",
+    style = "fixed",
+    breaks = c(-0.1, 0.5, 2.5, 5.5, 10.5, Inf),
+    labels = c("0", "1-2", "3-5", "6-10", "11+"),
+    title = "Nb parkings"
+  ) +
+  tm_borders(col = "grey70", lwd = 0.8) +
+  tm_layout(title = "Feature mobilite: stationnement (IRIS Nord)", legend.outside = TRUE)
+
+if (nrow(velo_zone) > 0) {
+  map_mobilite_features <- map_mobilite_features +
+    tm_shape(velo_zone) +
+    tm_lines(col = "#2A9D8F", lwd = 2, alpha = 0.8)
+}
+if (nrow(parkings_zone_plot) > 0) {
+  map_mobilite_features <- map_mobilite_features +
+    tm_shape(parkings_zone_plot) +
+    tm_symbols(
+      shape = 21,
+      fill = "#F4A261",
+      col = "#8D5524",
+      size = 0.35,
+      popup.vars = c("nom", "nb_places", "type_ouvrage", "iris_name")
+    )
+}
+```
+
+### Carte feature mobilite (stationnement + velo)
+
+```{r}
+map_mobilite_features
+```
+
+Row {data-height=620}
+-----------------------------------------------------------------------
+
+### Tableau parkings par IRIS {data-width=50}
+
+```{r}
+parkings_iris_tbl <- iris_mobilite %>%
+  st_drop_geometry() %>%
+  dplyr::select(Code_IRIS, iris_name, Nb_parkings_publics) %>%
+  arrange(desc(Nb_parkings_publics), iris_name)
+
+render_scroll_table(
+  parkings_iris_tbl,
+  caption = "Comptage des parkings publics par IRIS (zone Nord)",
+  height_px = 380
+)
+```
+
+### Indicateurs feature mobilite {data-width=50}
+
+```{r}
+velo_total_km <- if (nrow(velo_zone) > 0) {
+  suppressWarnings(round(sum(as.numeric(st_length(st_geometry(velo_zone))), na.rm = TRUE) / 1000, 2))
+} else {
+  NA_real_
+}
+
+mobilite_kpi <- tibble::tibble(
+  indicateur = c(
+    "Nb parkings publics detectes (zone Nord)",
+    "Nb IRIS avec >= 1 parking",
+    "Longueur totale pistes velo (km, zone Nord)"
+  ),
+  valeur = c(
+    nrow(parkings_zone),
+    sum(iris_mobilite$Nb_parkings_publics > 0, na.rm = TRUE),
+    velo_total_km
+  )
+)
+
+render_scroll_table(
+  mobilite_kpi,
+  caption = "KPI mobilite (feature complementaire)",
+  height_px = 260
+)
+```
+
+Row {data-height=420}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+<div class="analysis-scroll-box">
+<p>Analyse à ajouter</p>
+</div>
+
+
+PARTIE 3.7: Feature niveau d'etude (diplomes INSEE IRIS 2022)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+```{r}
+dipl_zip_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "insee", "rp_2022", "base-ic-diplomes-formation-2022_csv.zip"),
+  file.path(raw_dirs_search, "insee", "rp_2022", "base-ic-diplomes-formation-2022_csv.zip"),
+  file.path(raw_dirs_search, "base-ic-diplomes-formation-2022_csv.zip")
+))
+
+parse_num_fr <- function(x) {
+  suppressWarnings(as.numeric(str_replace_all(as.character(x), ",", ".")))
+}
+
+diplomes_iris_tbl <- tibble::tibble(Info = "Source diplomes INSEE non chargee.")
+diplomes_kpi <- tibble::tibble(indicateur = "Source diplome disponible", valeur = "non")
+
+if (!"Code_IRIS" %in% names(iris_zone_etude) && exists("iris_id_col") && iris_id_col %in% names(iris_zone_etude)) {
+  iris_zone_etude <- iris_zone_etude %>% mutate(Code_IRIS = as.character(.data[[iris_id_col]]))
+}
+
+if (!is.na(dipl_zip_path) && file.exists(dipl_zip_path)) {
+  zip_list <- utils::unzip(dipl_zip_path, list = TRUE)
+  zip_names <- as.character(zip_list$Name)
+  csv_name <- zip_names[str_detect(str_to_lower(zip_names), "base-ic-diplomes-formation-2022\\.csv$")][1]
+  if (is.na(csv_name)) {
+    csv_name <- zip_names[str_detect(str_to_lower(zip_names), "\\.csv$")][1]
+  }
+
+  if (!is.na(csv_name)) {
+    exdir_dipl <- file.path(tempdir(), "rp_diplomes_2022")
+    if (!dir.exists(exdir_dipl)) dir.create(exdir_dipl, recursive = TRUE, showWarnings = FALSE)
+    utils::unzip(dipl_zip_path, files = csv_name, exdir = exdir_dipl, overwrite = TRUE)
+    dipl_csv_path <- file.path(exdir_dipl, csv_name)
+
+    dipl_raw <- suppressMessages(readr::read_delim(
+      dipl_csv_path,
+      delim = ";",
+      col_types = readr::cols(.default = readr::col_character()),
+      show_col_types = FALSE,
+      locale = readr::locale(encoding = "UTF-8")
+    ))
+
+    names(dipl_raw) <- toupper(names(dipl_raw))
+    required_dipl_cols <- c(
+      "IRIS", "P22_NSCOL15P", "P22_NSCOL15P_DIPLMIN", "P22_NSCOL15P_BAC",
+      "P22_NSCOL15P_SUP2", "P22_NSCOL15P_SUP34", "P22_NSCOL15P_SUP5"
+    )
+
+    if (all(required_dipl_cols %in% names(dipl_raw))) {
+      dipl_iris <- dipl_raw %>%
+        transmute(
+          Code_IRIS = as.character(IRIS),
+          N_NonScol_15p = parse_num_fr(P22_NSCOL15P),
+          N_DiplMin_15p = parse_num_fr(P22_NSCOL15P_DIPLMIN),
+          N_Bac_15p = parse_num_fr(P22_NSCOL15P_BAC),
+          N_Sup2_15p = parse_num_fr(P22_NSCOL15P_SUP2),
+          N_Sup34_15p = parse_num_fr(P22_NSCOL15P_SUP34),
+          N_Sup5_15p = parse_num_fr(P22_NSCOL15P_SUP5)
+        ) %>%
+        mutate(
+          N_Sup_15p = rowSums(cbind(N_Sup2_15p, N_Sup34_15p, N_Sup5_15p), na.rm = TRUE),
+          Pct_DiplMin_15p = ifelse(is.finite(N_NonScol_15p) & N_NonScol_15p > 0, 100 * N_DiplMin_15p / N_NonScol_15p, NA_real_),
+          Pct_Bac_15p = ifelse(is.finite(N_NonScol_15p) & N_NonScol_15p > 0, 100 * N_Bac_15p / N_NonScol_15p, NA_real_),
+          Pct_Sup_15p = ifelse(is.finite(N_NonScol_15p) & N_NonScol_15p > 0, 100 * N_Sup_15p / N_NonScol_15p, NA_real_)
+        ) %>%
+        group_by(Code_IRIS) %>%
+        summarise(across(everything(), ~ {
+          x <- suppressWarnings(as.numeric(.x))
+          if (all(is.na(x))) NA_real_ else mean(x, na.rm = TRUE)
+        }), .groups = "drop")
+
+      iris_zone_etude <- iris_zone_etude %>%
+        dplyr::select(-any_of(c(
+          "N_NonScol_15p", "N_DiplMin_15p", "N_Bac_15p", "N_Sup2_15p", "N_Sup34_15p", "N_Sup5_15p", "N_Sup_15p",
+          "Pct_DiplMin_15p", "Pct_Bac_15p", "Pct_Sup_15p"
+        ))) %>%
+        left_join(dipl_iris, by = "Code_IRIS")
+
+      diplomes_iris_tbl <- iris_zone_etude %>%
+        st_drop_geometry() %>%
+        dplyr::select(Code_IRIS, iris_name, N_NonScol_15p, Pct_DiplMin_15p, Pct_Bac_15p, Pct_Sup_15p) %>%
+        arrange(desc(Pct_Sup_15p), iris_name)
+
+      diplomes_kpi <- tibble::tibble(
+        indicateur = c(
+          "IRIS avec donnees diplome",
+          "Part moyenne diplomes superieur (15+ non scolarises)",
+          "Part mediane diplomes superieur (15+ non scolarises)",
+          "Part moyenne niveau <= diplome min (15+ non scolarises)"
+        ),
+        valeur = c(
+          sum(!is.na(iris_zone_etude$Pct_Sup_15p)),
+          round(mean(iris_zone_etude$Pct_Sup_15p, na.rm = TRUE), 2),
+          round(median(iris_zone_etude$Pct_Sup_15p, na.rm = TRUE), 2),
+          round(mean(iris_zone_etude$Pct_DiplMin_15p, na.rm = TRUE), 2)
+        )
+      )
+    }
+  }
+}
+
+for (v in c("N_NonScol_15p", "N_DiplMin_15p", "N_Bac_15p", "N_Sup2_15p", "N_Sup34_15p", "N_Sup5_15p", "N_Sup_15p", "Pct_DiplMin_15p", "Pct_Bac_15p", "Pct_Sup_15p")) {
+  if (!v %in% names(iris_zone_etude)) iris_zone_etude[[v]] <- NA_real_
+}
+
+map_diplomes_feature <- tm_shape(iris_zone_etude) +
+  tm_polygons(
+    col = "Pct_Sup_15p",
+    palette = "YlOrRd",
+    style = "quantile",
+    n = 5,
+    title = "% diplome sup (15+ non scolarises)",
+    id = "iris_name"
+  ) +
+  tm_text("iris_name", size = 0.75) +
+  tm_layout(
+    title = "Feature niveau d'etude: part de diplomes superieur (IRIS 2022, zone Nord)",
+    legend.outside = TRUE
+  )
+```
+
+### Carte feature niveau d'etude (diplomes superieur)
+
+```{r}
+map_diplomes_feature
+```
+
+Row {data-height=620}
+-----------------------------------------------------------------------
+
+### Tableau diplomes par IRIS {data-width=50}
+
+```{r}
+render_scroll_table(
+  diplomes_iris_tbl,
+  caption = "Niveau d'etude (INSEE RP 2022) par IRIS - zone Nord",
+  height_px = 380
+)
+```
+
+### Indicateurs feature niveau d'etude {data-width=50}
+
+```{r}
+render_scroll_table(
+  diplomes_kpi,
+  caption = "KPI niveau d'etude (IRIS 2022)",
+  height_px = 260
+)
+```
+
+Row {data-height=420}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+<div class="analysis-scroll-box">
+<p>Analyse à ajouter</p>
+</div>
+
+
+PARTIE 3.8: Feature logement (proprietaires, locataires, HLM, emmenagement)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+```{r}
+read_zip_csv_guess <- function(zip_path, pattern = "\\.csv$", col_select = NULL) {
+  if (is.na(zip_path) || !file.exists(zip_path)) return(NULL)
+  zlist <- tryCatch(utils::unzip(zip_path, list = TRUE), error = function(e) NULL)
+  if (is.null(zlist) || nrow(zlist) == 0) return(NULL)
+  zname <- as.character(zlist$Name)
+  pick <- zname[str_detect(str_to_lower(basename(zname)), str_to_lower(pattern))][1]
+  if (is.na(pick)) pick <- zname[str_detect(str_to_lower(basename(zname)), "\\.csv$")][1]
+  if (is.na(pick)) return(NULL)
+  exdir <- file.path(tempdir(), "r2_zip_extract")
+  if (!dir.exists(exdir)) dir.create(exdir, recursive = TRUE, showWarnings = FALSE)
+  utils::unzip(zip_path, files = pick, exdir = exdir, overwrite = TRUE)
+  csv_path <- file.path(exdir, pick)
+  safe_read_semicolon(csv_path, col_select = col_select)
+}
+
+as_num_feature <- function(x) {
+  suppressWarnings(as.numeric(str_replace_all(as.character(x), ",", ".")))
+}
+
+build_feature_map <- function(sf_obj, var, title_txt, legend_title = NULL, palette = "YlGnBu") {
+  if (!var %in% names(sf_obj)) sf_obj[[var]] <- NA_real_
+  vals <- suppressWarnings(as.numeric(sf_obj[[var]]))
+  has_vals <- any(is.finite(vals))
+  if (!has_vals) {
+    return(
+      tm_shape(sf_obj) +
+        tm_borders(col = "grey70", lwd = 0.8) +
+        tm_fill(alpha = 0) +
+        tm_layout(title = paste0(title_txt, " (donnees indisponibles)"), legend.outside = TRUE)
+    )
+  }
+  tm_shape(sf_obj) +
+    tm_polygons(
+      col = var,
+      palette = palette,
+      style = "pretty",
+      n = 5,
+      id = "iris_name",
+      title = ifelse(is.null(legend_title), var, legend_title)
+    ) +
+    tm_text("iris_name", size = 0.72) +
+    tm_layout(title = title_txt, legend.outside = TRUE)
+}
+
+if (!"Code_IRIS" %in% names(iris_zone_etude) && exists("iris_id_col") && iris_id_col %in% names(iris_zone_etude)) {
+  iris_zone_etude <- iris_zone_etude %>% mutate(Code_IRIS = as.character(.data[[iris_id_col]]))
+}
+if ("Code_IRIS" %in% names(iris_zone_etude)) {
+  iris_zone_etude$Code_IRIS <- as.character(iris_zone_etude$Code_IRIS)
+}
+
+logement_zip_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "insee", "rp_2022", "base-ic-logement-2022_csv.zip"),
+  file.path(raw_dirs_search, "insee", "rp_2022", "base-ic-logement-2022_csv.zip"),
+  file.path(raw_dirs_search, "base-ic-logement-2022_csv.zip")
+))
+
+logement_iris_tbl <- tibble::tibble(Info = "Source logement INSEE non chargee.")
+logement_kpi <- tibble::tibble(indicateur = "Source logement disponible", valeur = "non")
+
+if (!is.na(logement_zip_path) && file.exists(logement_zip_path)) {
+  logement_raw <- read_zip_csv_guess(
+    logement_zip_path,
+    pattern = "logement",
+    col_select = c("IRIS", "P22_RP", "P22_RP_PROP", "P22_RP_LOC", "P22_RP_LOCHLMV", "P22_ANEM_RP", "P22_RP_VOIT2P")
+  )
+  if (!is.null(logement_raw) && nrow(logement_raw) > 0) {
+    names(logement_raw) <- toupper(names(logement_raw))
+    req_log <- c("IRIS", "P22_RP", "P22_RP_PROP", "P22_RP_LOC", "P22_RP_LOCHLMV", "P22_ANEM_RP", "P22_RP_VOIT2P")
+    if (all(req_log %in% names(logement_raw))) {
+      logement_iris <- logement_raw %>%
+        transmute(
+          Code_IRIS = as.character(IRIS),
+          RP_total = as_num_feature(P22_RP),
+          RP_prop = as_num_feature(P22_RP_PROP),
+          RP_loc = as_num_feature(P22_RP_LOC),
+          RP_hlm = as_num_feature(P22_RP_LOCHLMV),
+          ANEM_moy = as_num_feature(P22_ANEM_RP),
+          RP_voit2p = as_num_feature(P22_RP_VOIT2P)
+        ) %>%
+        mutate(
+          Pct_Proprietaires_iris = ifelse(is.finite(RP_total) & RP_total > 0, 100 * RP_prop / RP_total, NA_real_),
+          Pct_Locataires_iris = ifelse(is.finite(RP_total) & RP_total > 0, 100 * RP_loc / RP_total, NA_real_),
+          Pct_HLM_iris = ifelse(is.finite(RP_total) & RP_total > 0, 100 * RP_hlm / RP_total, NA_real_),
+          Anciennete_emmenagement_moy = ANEM_moy,
+          Pct_2plus_voitures_iris = ifelse(is.finite(RP_total) & RP_total > 0, 100 * RP_voit2p / RP_total, NA_real_)
+        ) %>%
+        group_by(Code_IRIS) %>%
+        summarise(across(
+          c(Pct_Proprietaires_iris, Pct_Locataires_iris, Pct_HLM_iris, Anciennete_emmenagement_moy, Pct_2plus_voitures_iris),
+          ~ if (all(is.na(.x))) NA_real_ else mean(.x, na.rm = TRUE)
+        ), .groups = "drop")
+
+      iris_zone_etude <- iris_zone_etude %>%
+        dplyr::select(-any_of(c("Pct_Proprietaires_iris", "Pct_Locataires_iris", "Pct_HLM_iris", "Anciennete_emmenagement_moy", "Pct_2plus_voitures_iris"))) %>%
+        left_join(logement_iris, by = "Code_IRIS")
+
+      logement_iris_tbl <- iris_zone_etude %>%
+        st_drop_geometry() %>%
+        dplyr::select(Code_IRIS, iris_name, Pct_Proprietaires_iris, Pct_Locataires_iris, Pct_HLM_iris, Pct_2plus_voitures_iris, Anciennete_emmenagement_moy) %>%
+        arrange(desc(Pct_Proprietaires_iris), iris_name)
+
+      logement_kpi <- tibble::tibble(
+        indicateur = c(
+          "IRIS avec donnees logement",
+          "Part moyenne proprietaires (%)",
+          "Part moyenne locataires (%)",
+          "Part moyenne HLM (%)",
+          "Part moyenne menages avec 2+ voitures (%)"
+        ),
+        valeur = c(
+          sum(!is.na(iris_zone_etude$Pct_Proprietaires_iris)),
+          round(mean(iris_zone_etude$Pct_Proprietaires_iris, na.rm = TRUE), 2),
+          round(mean(iris_zone_etude$Pct_Locataires_iris, na.rm = TRUE), 2),
+          round(mean(iris_zone_etude$Pct_HLM_iris, na.rm = TRUE), 2),
+          round(mean(iris_zone_etude$Pct_2plus_voitures_iris, na.rm = TRUE), 2)
+        )
+      )
+    }
+  }
+}
+
+for (v in c("Pct_Proprietaires_iris", "Pct_Locataires_iris", "Pct_HLM_iris", "Anciennete_emmenagement_moy", "Pct_2plus_voitures_iris")) {
+  if (!v %in% names(iris_zone_etude)) iris_zone_etude[[v]] <- NA_real_
+}
+
+map_logement_feature <- build_feature_map(
+  iris_zone_etude,
+  var = "Pct_Proprietaires_iris",
+  title_txt = "Feature logement: part des proprietaires (IRIS 2022, zone Nord)",
+  legend_title = "% proprietaires",
+  palette = "PuBuGn"
+)
+```
+
+### Carte feature logement (% proprietaires)
+
+```{r}
+map_logement_feature
+```
+
+Row {data-height=620}
+-----------------------------------------------------------------------
+
+### Tableau logement par IRIS {data-width=50}
+
+```{r}
+render_scroll_table(
+  logement_iris_tbl,
+  caption = "Logement (INSEE RP 2022) par IRIS - zone Nord",
+  height_px = 380
+)
+```
+
+### Indicateurs feature logement {data-width=50}
+
+```{r}
+render_scroll_table(
+  logement_kpi,
+  caption = "KPI logement (IRIS 2022)",
+  height_px = 260
+)
+```
+
+Row {data-height=420}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+<div class="analysis-scroll-box">
+<p>Analyse à ajouter</p>
+</div>
+
+
+PARTIE 3.9: Feature activite/emploi (chomage, inactivite, actifs)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+```{r}
+activite_zip_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "insee", "rp_2022", "base-ic-activite-residents-2022_csv.zip"),
+  file.path(raw_dirs_search, "insee", "rp_2022", "base-ic-activite-residents-2022_csv.zip"),
+  file.path(raw_dirs_search, "base-ic-activite-residents-2022_csv.zip")
+))
+
+activite_iris_tbl <- tibble::tibble(Info = "Source activite INSEE non chargee.")
+activite_kpi <- tibble::tibble(indicateur = "Source activite disponible", valeur = "non")
+
+if (!is.na(activite_zip_path) && file.exists(activite_zip_path)) {
+  activite_raw <- read_zip_csv_guess(
+    activite_zip_path,
+    pattern = "activite-residents",
+    col_select = c("IRIS", "P22_POP1564", "P22_ACT1564", "P22_CHOM1564", "P22_INACT1564", "C22_ACTOCC15P_TCOM", "C22_ACTOCC15P_VELO", "C22_ACTOCC15P_VOIT")
+  )
+  if (!is.null(activite_raw) && nrow(activite_raw) > 0) {
+    names(activite_raw) <- toupper(names(activite_raw))
+    req_act <- c("IRIS", "P22_POP1564", "P22_ACT1564", "P22_CHOM1564", "P22_INACT1564")
+    if (all(req_act %in% names(activite_raw))) {
+      activite_iris <- activite_raw %>%
+        transmute(
+          Code_IRIS = as.character(IRIS),
+          POP1564 = as_num_feature(P22_POP1564),
+          ACT1564 = as_num_feature(P22_ACT1564),
+          CHOM1564 = as_num_feature(P22_CHOM1564),
+          INACT1564 = as_num_feature(P22_INACT1564),
+          Mode_TC = if ("C22_ACTOCC15P_TCOM" %in% names(activite_raw)) as_num_feature(C22_ACTOCC15P_TCOM) else NA_real_,
+          Mode_Velo = if ("C22_ACTOCC15P_VELO" %in% names(activite_raw)) as_num_feature(C22_ACTOCC15P_VELO) else NA_real_,
+          Mode_Voit = if ("C22_ACTOCC15P_VOIT" %in% names(activite_raw)) as_num_feature(C22_ACTOCC15P_VOIT) else NA_real_
+        ) %>%
+        mutate(
+          Part_actifs_15_64_iris = ifelse(is.finite(POP1564) & POP1564 > 0, 100 * ACT1564 / POP1564, NA_real_),
+          Taux_chomage_iris = ifelse(is.finite(ACT1564) & ACT1564 > 0, 100 * CHOM1564 / ACT1564, NA_real_),
+          Taux_inactivite_iris = ifelse(is.finite(POP1564) & POP1564 > 0, 100 * INACT1564 / POP1564, NA_real_),
+          Part_TC_navette_iris = Mode_TC,
+          Part_Velo_navette_iris = Mode_Velo,
+          Part_Voit_navette_iris = Mode_Voit
+        ) %>%
+        group_by(Code_IRIS) %>%
+        summarise(across(
+          c(Part_actifs_15_64_iris, Taux_chomage_iris, Taux_inactivite_iris, Part_TC_navette_iris, Part_Velo_navette_iris, Part_Voit_navette_iris),
+          ~ if (all(is.na(.x))) NA_real_ else mean(.x, na.rm = TRUE)
+        ), .groups = "drop")
+
+      iris_zone_etude <- iris_zone_etude %>%
+        dplyr::select(-any_of(c("Part_actifs_15_64_iris", "Taux_chomage_iris", "Taux_inactivite_iris", "Part_TC_navette_iris", "Part_Velo_navette_iris", "Part_Voit_navette_iris"))) %>%
+        left_join(activite_iris, by = "Code_IRIS")
+
+      activite_iris_tbl <- iris_zone_etude %>%
+        st_drop_geometry() %>%
+        dplyr::select(Code_IRIS, iris_name, Part_actifs_15_64_iris, Taux_chomage_iris, Taux_inactivite_iris, Part_TC_navette_iris, Part_Velo_navette_iris, Part_Voit_navette_iris) %>%
+        arrange(desc(Taux_chomage_iris), iris_name)
+
+      activite_kpi <- tibble::tibble(
+        indicateur = c(
+          "IRIS avec donnees activite",
+          "Taux moyen d'actifs 15-64 ans (%)",
+          "Taux moyen de chomage (%)",
+          "Taux moyen d'inactivite (%)",
+          "Part moyenne navette velo (%)"
+        ),
+        valeur = c(
+          sum(!is.na(iris_zone_etude$Taux_chomage_iris)),
+          round(mean(iris_zone_etude$Part_actifs_15_64_iris, na.rm = TRUE), 2),
+          round(mean(iris_zone_etude$Taux_chomage_iris, na.rm = TRUE), 2),
+          round(mean(iris_zone_etude$Taux_inactivite_iris, na.rm = TRUE), 2),
+          round(mean(iris_zone_etude$Part_Velo_navette_iris, na.rm = TRUE), 2)
+        )
+      )
+    }
+  }
+}
+
+for (v in c("Part_actifs_15_64_iris", "Taux_chomage_iris", "Taux_inactivite_iris", "Part_TC_navette_iris", "Part_Velo_navette_iris", "Part_Voit_navette_iris")) {
+  if (!v %in% names(iris_zone_etude)) iris_zone_etude[[v]] <- NA_real_
+}
+
+map_activite_feature <- build_feature_map(
+  iris_zone_etude,
+  var = "Taux_chomage_iris",
+  title_txt = "Feature activite: taux de chomage (IRIS 2022, zone Nord)",
+  legend_title = "% chomage",
+  palette = "OrRd"
+)
+```
+
+### Carte feature activite (% chomage)
+
+```{r}
+map_activite_feature
+```
+
+Row {data-height=620}
+-----------------------------------------------------------------------
+
+### Tableau activite par IRIS {data-width=50}
+
+```{r}
+render_scroll_table(
+  activite_iris_tbl,
+  caption = "Activite des residents (INSEE RP 2022) par IRIS - zone Nord",
+  height_px = 380
+)
+```
+
+### Indicateurs feature activite {data-width=50}
+
+```{r}
+render_scroll_table(
+  activite_kpi,
+  caption = "KPI activite/emploi (IRIS 2022)",
+  height_px = 260
+)
+```
+
+Row {data-height=420}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+<div class="analysis-scroll-box">
+<p>Analyse à ajouter</p>
+</div>
+
+
+PARTIE 3.10: Feature cycles de vie (age 25-39, 45-59, 65+)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+```{r}
+pop_zip_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "insee", "rp_2022", "base-ic-evol-struct-pop-2022_csv.zip"),
+  file.path(raw_dirs_search, "insee", "rp_2022", "base-ic-evol-struct-pop-2022_csv.zip"),
+  file.path(raw_dirs_search, "base-ic-evol-struct-pop-2022_csv.zip")
+))
+
+age_iris_tbl <- tibble::tibble(Info = "Source population INSEE non chargee.")
+age_kpi <- tibble::tibble(indicateur = "Source population disponible", valeur = "non")
+
+if (!is.na(pop_zip_path) && file.exists(pop_zip_path)) {
+  pop_raw <- read_zip_csv_guess(
+    pop_zip_path,
+    pattern = "evol-struct-pop",
+    col_select = c("IRIS", "P22_POP", "P22_POP2539", "P22_POP4559", "P22_POP65P", "P22_POP75P")
+  )
+  if (!is.null(pop_raw) && nrow(pop_raw) > 0) {
+    names(pop_raw) <- toupper(names(pop_raw))
+    req_age <- c("IRIS", "P22_POP", "P22_POP2539", "P22_POP4559", "P22_POP65P")
+    if (all(req_age %in% names(pop_raw))) {
+      age_iris <- pop_raw %>%
+        transmute(
+          Code_IRIS = as.character(IRIS),
+          POP_total = as_num_feature(P22_POP),
+          POP_2539 = as_num_feature(P22_POP2539),
+          POP_4559 = as_num_feature(P22_POP4559),
+          POP_65P = as_num_feature(P22_POP65P),
+          POP_75P = if ("P22_POP75P" %in% names(pop_raw)) as_num_feature(P22_POP75P) else NA_real_
+        ) %>%
+        mutate(
+          Part_age_25_39_iris = ifelse(is.finite(POP_total) & POP_total > 0, 100 * POP_2539 / POP_total, NA_real_),
+          Part_age_45_59_iris = ifelse(is.finite(POP_total) & POP_total > 0, 100 * POP_4559 / POP_total, NA_real_),
+          Part_age_65p_iris = ifelse(is.finite(POP_total) & POP_total > 0, 100 * POP_65P / POP_total, NA_real_),
+          Part_age_75p_iris = ifelse(is.finite(POP_total) & POP_total > 0, 100 * POP_75P / POP_total, NA_real_)
+        ) %>%
+        group_by(Code_IRIS) %>%
+        summarise(across(
+          c(Part_age_25_39_iris, Part_age_45_59_iris, Part_age_65p_iris, Part_age_75p_iris),
+          ~ if (all(is.na(.x))) NA_real_ else mean(.x, na.rm = TRUE)
+        ), .groups = "drop")
+
+      iris_zone_etude <- iris_zone_etude %>%
+        dplyr::select(-any_of(c("Part_age_25_39_iris", "Part_age_45_59_iris", "Part_age_65p_iris", "Part_age_75p_iris"))) %>%
+        left_join(age_iris, by = "Code_IRIS")
+
+      age_iris_tbl <- iris_zone_etude %>%
+        st_drop_geometry() %>%
+        dplyr::select(Code_IRIS, iris_name, Part_age_25_39_iris, Part_age_45_59_iris, Part_age_65p_iris, Part_age_75p_iris) %>%
+        arrange(desc(Part_age_25_39_iris), iris_name)
+
+      age_kpi <- tibble::tibble(
+        indicateur = c(
+          "IRIS avec donnees age",
+          "Part moyenne 25-39 ans (%)",
+          "Part moyenne 45-59 ans (%)",
+          "Part moyenne 65 ans et plus (%)",
+          "Part moyenne 75 ans et plus (%)"
+        ),
+        valeur = c(
+          sum(!is.na(iris_zone_etude$Part_age_25_39_iris)),
+          round(mean(iris_zone_etude$Part_age_25_39_iris, na.rm = TRUE), 2),
+          round(mean(iris_zone_etude$Part_age_45_59_iris, na.rm = TRUE), 2),
+          round(mean(iris_zone_etude$Part_age_65p_iris, na.rm = TRUE), 2),
+          round(mean(iris_zone_etude$Part_age_75p_iris, na.rm = TRUE), 2)
+        )
+      )
+    }
+  }
+}
+
+for (v in c("Part_age_25_39_iris", "Part_age_45_59_iris", "Part_age_65p_iris", "Part_age_75p_iris")) {
+  if (!v %in% names(iris_zone_etude)) iris_zone_etude[[v]] <- NA_real_
+}
+
+map_age_feature <- build_feature_map(
+  iris_zone_etude,
+  var = "Part_age_25_39_iris",
+  title_txt = "Feature cycles de vie: part des 25-39 ans (IRIS 2022, zone Nord)",
+  legend_title = "% 25-39 ans",
+  palette = "YlGn"
+)
+```
+
+### Carte feature cycles de vie (% 25-39 ans)
+
+```{r}
+map_age_feature
+```
+
+Row {data-height=620}
+-----------------------------------------------------------------------
+
+### Tableau age par IRIS {data-width=50}
+
+```{r}
+render_scroll_table(
+  age_iris_tbl,
+  caption = "Structure d'age (INSEE RP 2022) par IRIS - zone Nord",
+  height_px = 380
+)
+```
+
+### Indicateurs feature cycles de vie {data-width=50}
+
+```{r}
+render_scroll_table(
+  age_kpi,
+  caption = "KPI cycles de vie (IRIS 2022)",
+  height_px = 260
+)
+```
+
+Row {data-height=420}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+<div class="analysis-scroll-box">
+<p>Analyse à ajouter</p>
+</div>
+
+
+PARTIE 3.11: Feature accessibilite TC (GTFS SEM/C38)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+```{r}
+gtfs_sem_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "mobilite", "gtfs", "gtfs_SEM.zip")
+))
+gtfs_c38_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "mobilite", "gtfs", "gtfs_C38.zip")
+))
+
+read_gtfs_stops <- function(zip_path, source_name) {
+  if (is.na(zip_path) || !file.exists(zip_path)) return(tibble::tibble())
+  dt <- tryCatch(
+    data.table::fread(
+      cmd = paste("unzip -p", shQuote(zip_path), "stops.txt"),
+      showProgress = FALSE
+    ),
+    error = function(e) NULL
+  )
+  if (is.null(dt) || nrow(dt) == 0) return(tibble::tibble())
+  as_tibble(dt) %>%
+    transmute(
+      stop_id = as.character(stop_id),
+      stop_name = as.character(stop_name),
+      stop_lat = suppressWarnings(as.numeric(stop_lat)),
+      stop_lon = suppressWarnings(as.numeric(stop_lon)),
+      wheelchair_boarding = suppressWarnings(as.numeric(wheelchair_boarding)),
+      source_tc = source_name
+    )
+}
+
+read_gtfs_passages_proxy <- function(zip_path, source_name) {
+  if (is.na(zip_path) || !file.exists(zip_path)) return(tibble::tibble(stop_id = character(), source_tc = character(), nb_passages = numeric()))
+  dt <- tryCatch(
+    data.table::fread(
+      cmd = paste("unzip -p", shQuote(zip_path), "stop_times.txt"),
+      select = c("stop_id"),
+      showProgress = FALSE
+    ),
+    error = function(e) NULL
+  )
+  if (is.null(dt) || nrow(dt) == 0 || !"stop_id" %in% names(dt)) {
+    return(tibble::tibble(stop_id = character(), source_tc = character(), nb_passages = numeric()))
+  }
+  dt[, stop_id := as.character(stop_id)]
+  agg <- dt[, .(nb_passages = .N), by = .(stop_id)]
+  agg$source_tc <- source_name
+  as_tibble(agg)
+}
+
+tc_iris_tbl <- tibble::tibble(Info = "Sources GTFS non chargees.")
+tc_kpi <- tibble::tibble(indicateur = "Source GTFS disponible", valeur = "non")
+
+stops_sem <- read_gtfs_stops(gtfs_sem_path, "SEM")
+stops_c38 <- read_gtfs_stops(gtfs_c38_path, "C38")
+stops_tc <- bind_rows(stops_sem, stops_c38) %>%
+  filter(is.finite(stop_lat), is.finite(stop_lon))
+
+pass_sem <- read_gtfs_passages_proxy(gtfs_sem_path, "SEM")
+pass_c38 <- read_gtfs_passages_proxy(gtfs_c38_path, "C38")
+pass_tc <- bind_rows(pass_sem, pass_c38)
+
+if (nrow(stops_tc) > 0) {
+  stops_tc <- stops_tc %>%
+    left_join(pass_tc, by = c("stop_id", "source_tc"))
+
+  stops_tc_sf <- stops_tc %>%
+    st_as_sf(coords = c("stop_lon", "stop_lat"), crs = 4326, remove = FALSE) %>%
+    st_transform(st_crs(iris_zone_etude))
+
+  stops_tc_join <- st_join(
+    stops_tc_sf,
+    iris_zone_etude %>% dplyr::select(Code_IRIS, iris_name),
+    left = FALSE
+  )
+
+  tc_iris <- stops_tc_join %>%
+    st_drop_geometry() %>%
+    group_by(Code_IRIS) %>%
+    summarise(
+      Nb_arrets_tc_iris = n(),
+      Nb_arrets_pmr_tc_iris = sum(wheelchair_boarding == 1, na.rm = TRUE),
+      Pct_arrets_pmr_tc_iris = ifelse(Nb_arrets_tc_iris > 0, 100 * Nb_arrets_pmr_tc_iris / Nb_arrets_tc_iris, NA_real_),
+      Nb_passages_tc_proxy_iris = sum(nb_passages, na.rm = TRUE),
+      Passages_moy_stop_tc_iris = ifelse(all(is.na(nb_passages)), NA_real_, mean(nb_passages, na.rm = TRUE)),
+      .groups = "drop"
+    )
+
+  iris_zone_etude <- iris_zone_etude %>%
+    dplyr::select(-any_of(c("Nb_arrets_tc_iris", "Nb_arrets_pmr_tc_iris", "Pct_arrets_pmr_tc_iris", "Nb_passages_tc_proxy_iris", "Passages_moy_stop_tc_iris"))) %>%
+    left_join(tc_iris, by = "Code_IRIS")
+
+  tc_iris_tbl <- iris_zone_etude %>%
+    st_drop_geometry() %>%
+    dplyr::select(Code_IRIS, iris_name, Nb_arrets_tc_iris, Nb_arrets_pmr_tc_iris, Pct_arrets_pmr_tc_iris, Nb_passages_tc_proxy_iris, Passages_moy_stop_tc_iris) %>%
+    arrange(desc(Nb_arrets_tc_iris), iris_name)
+
+  tc_kpi <- tibble::tibble(
+    indicateur = c(
+      "Arrets GTFS retenus (zone Nord)",
+      "IRIS avec >=1 arret TC",
+      "Part moyenne d'arrets PMR (%)",
+      "Passages proxy moyens par stop"
+    ),
+    valeur = c(
+      nrow(stops_tc_join),
+      sum(iris_zone_etude$Nb_arrets_tc_iris > 0, na.rm = TRUE),
+      round(mean(iris_zone_etude$Pct_arrets_pmr_tc_iris, na.rm = TRUE), 2),
+      round(mean(iris_zone_etude$Passages_moy_stop_tc_iris, na.rm = TRUE), 2)
+    )
+  )
+}
+
+for (v in c("Nb_arrets_tc_iris", "Nb_arrets_pmr_tc_iris", "Pct_arrets_pmr_tc_iris", "Nb_passages_tc_proxy_iris", "Passages_moy_stop_tc_iris")) {
+  if (!v %in% names(iris_zone_etude)) iris_zone_etude[[v]] <- NA_real_
+}
+
+map_tc_feature <- build_feature_map(
+  iris_zone_etude,
+  var = "Nb_arrets_tc_iris",
+  title_txt = "Feature accessibilite TC: nombre d'arrets GTFS par IRIS",
+  legend_title = "Nb arrets TC",
+  palette = "Blues"
+)
+```
+
+### Carte feature accessibilite TC (arrets GTFS)
+
+```{r}
+map_tc_feature
+```
+
+Row {data-height=620}
+-----------------------------------------------------------------------
+
+### Tableau TC par IRIS {data-width=50}
+
+```{r}
+render_scroll_table(
+  tc_iris_tbl,
+  caption = "Accessibilite TC (GTFS SEM/C38) par IRIS - zone Nord",
+  height_px = 380
+)
+```
+
+### Indicateurs feature TC {data-width=50}
+
+```{r}
+render_scroll_table(
+  tc_kpi,
+  caption = "KPI accessibilite TC (GTFS)",
+  height_px = 260
+)
+```
+
+Row {data-height=420}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+<div class="analysis-scroll-box">
+<p>Analyse à ajouter</p>
+</div>
+
+
+PARTIE 3.12: Feature stationnement dynamique (places libres)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+```{r}
+park_points_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "mobilite", "stationnement", "parkings_points.json")
+))
+park_dyn_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "mobilite", "stationnement", "parkings_temps_reel.json")
+))
+
+park_dyn_iris_tbl <- tibble::tibble(Info = "Sources stationnement dynamique non chargees.")
+park_dyn_kpi <- tibble::tibble(indicateur = "Source stationnement dynamique disponible", valeur = "non")
+
+if (!is.na(park_points_path) && file.exists(park_points_path) && !is.na(park_dyn_path) && file.exists(park_dyn_path)) {
+  park_points_sf <- tryCatch(sf::st_read(park_points_path, quiet = TRUE), error = function(e) NULL)
+  dyn_raw <- tryCatch(jsonlite::fromJSON(park_dyn_path, simplifyVector = FALSE), error = function(e) NULL)
+
+  if (!is.null(park_points_sf) && nrow(park_points_sf) > 0 && is.list(dyn_raw)) {
+    extract_free_places <- function(x) {
+      v1 <- if (!is.null(x$nb_places_libres)) x$nb_places_libres else NA_real_
+      v2 <- if (!is.null(x$nb_pr_libres)) x$nb_pr_libres else NA_real_
+      v <- ifelse(is.na(v1), v2, v1)
+      suppressWarnings(as.numeric(v))
+    }
+
+    dyn_df <- tibble::tibble(
+      id = names(dyn_raw),
+      nb_places_libres = vapply(dyn_raw, extract_free_places, numeric(1)),
+      time_dyn = vapply(dyn_raw, function(x) if (!is.null(x$time)) as.character(x$time) else NA_character_, character(1))
+    )
+
+    park_points_sf <- park_points_sf %>%
+      mutate(
+        id = as.character(if ("id" %in% names(.)) id else if ("code" %in% names(.)) code else NA_character_),
+        nb_places = suppressWarnings(as.numeric(if ("nb_places" %in% names(.)) nb_places else NA_real_))
+      ) %>%
+      left_join(dyn_df, by = "id") %>%
+      mutate(
+        Taux_places_libres = ifelse(is.finite(nb_places) & nb_places > 0 & is.finite(nb_places_libres), 100 * nb_places_libres / nb_places, NA_real_)
+      ) %>%
+      st_transform(st_crs(iris_zone_etude))
+
+    park_dyn_join <- st_join(
+      park_points_sf,
+      iris_zone_etude %>% dplyr::select(Code_IRIS, iris_name),
+      left = FALSE
+    )
+
+    park_dyn_iris <- park_dyn_join %>%
+      st_drop_geometry() %>%
+      group_by(Code_IRIS) %>%
+      summarise(
+        Nb_parkings_dyn_iris = n(),
+        Taux_places_libres_iris = ifelse(all(is.na(Taux_places_libres)), NA_real_, mean(Taux_places_libres, na.rm = TRUE)),
+        Places_libres_total_iris = sum(nb_places_libres, na.rm = TRUE),
+        Places_capacite_total_iris = sum(nb_places, na.rm = TRUE),
+        .groups = "drop"
+      )
+
+    iris_zone_etude <- iris_zone_etude %>%
+      dplyr::select(-any_of(c("Nb_parkings_dyn_iris", "Taux_places_libres_iris", "Places_libres_total_iris", "Places_capacite_total_iris"))) %>%
+      left_join(park_dyn_iris, by = "Code_IRIS")
+
+    park_dyn_iris_tbl <- iris_zone_etude %>%
+      st_drop_geometry() %>%
+      dplyr::select(Code_IRIS, iris_name, Nb_parkings_dyn_iris, Taux_places_libres_iris, Places_libres_total_iris, Places_capacite_total_iris) %>%
+      arrange(desc(Taux_places_libres_iris), iris_name)
+
+    park_dyn_kpi <- tibble::tibble(
+      indicateur = c(
+        "Parkings dynamiques geolocalises (zone Nord)",
+        "IRIS avec donnee dynamique",
+        "Taux moyen de places libres (%)",
+        "Places libres totales observees"
+      ),
+      valeur = c(
+        nrow(park_dyn_join),
+        sum(iris_zone_etude$Nb_parkings_dyn_iris > 0, na.rm = TRUE),
+        round(mean(iris_zone_etude$Taux_places_libres_iris, na.rm = TRUE), 2),
+        round(sum(iris_zone_etude$Places_libres_total_iris, na.rm = TRUE), 0)
+      )
+    )
+  }
+}
+
+for (v in c("Nb_parkings_dyn_iris", "Taux_places_libres_iris", "Places_libres_total_iris", "Places_capacite_total_iris")) {
+  if (!v %in% names(iris_zone_etude)) iris_zone_etude[[v]] <- NA_real_
+}
+
+map_park_dyn_feature <- build_feature_map(
+  iris_zone_etude,
+  var = "Taux_places_libres_iris",
+  title_txt = "Feature stationnement dynamique: taux de places libres par IRIS",
+  legend_title = "% places libres",
+  palette = "GnBu"
+)
+```
+
+### Carte feature stationnement dynamique (% places libres)
+
+```{r}
+map_park_dyn_feature
+```
+
+Row {data-height=620}
+-----------------------------------------------------------------------
+
+### Tableau stationnement dynamique par IRIS {data-width=50}
+
+```{r}
+render_scroll_table(
+  park_dyn_iris_tbl,
+  caption = "Stationnement dynamique (places libres) par IRIS - zone Nord",
+  height_px = 380
+)
+```
+
+### Indicateurs feature stationnement dynamique {data-width=50}
+
+```{r}
+render_scroll_table(
+  park_dyn_kpi,
+  caption = "KPI stationnement dynamique",
+  height_px = 260
+)
+```
+
+Row {data-height=420}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+<div class="analysis-scroll-box">
+<p>Analyse à ajouter</p>
+</div>
+
+
+PARTIE 3.13: Feature pollution air (Atmo NO2/PM10/PM2.5)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+```{r}
+atmo_dir <- file.path(raw_dir_report2, "indices_atmo")
+atmo_csv_candidates <- if (dir.exists(atmo_dir)) list.files(atmo_dir, pattern = "\\.csv$", full.names = TRUE) else character()
+atmo_csv_path <- atmo_csv_candidates[1]
+
+atmo_iris_tbl <- tibble::tibble(Info = "Source Atmo non chargee.")
+atmo_kpi <- tibble::tibble(indicateur = "Source Atmo disponible", valeur = "non")
+
+if (!is.na(atmo_csv_path) && length(atmo_csv_path) > 0 && file.exists(atmo_csv_path)) {
+  atmo_dt <- tryCatch(
+    data.table::fread(atmo_csv_path, encoding = "UTF-8", showProgress = FALSE),
+    error = function(e) NULL
+  )
+  if (!is.null(atmo_dt) && nrow(atmo_dt) > 0) {
+    names(atmo_dt) <- tolower(names(atmo_dt))
+    req_atmo <- c("x_wgs84", "y_wgs84", "conc_no2", "conc_pm10", "conc_pm25")
+    if (all(req_atmo %in% names(atmo_dt))) {
+      atmo_sf <- as_tibble(atmo_dt) %>%
+        transmute(
+          x_wgs84 = as_num_feature(x_wgs84),
+          y_wgs84 = as_num_feature(y_wgs84),
+          conc_no2 = as_num_feature(conc_no2),
+          conc_pm10 = as_num_feature(conc_pm10),
+          conc_pm25 = as_num_feature(conc_pm25)
+        ) %>%
+        filter(is.finite(x_wgs84), is.finite(y_wgs84)) %>%
+        st_as_sf(coords = c("x_wgs84", "y_wgs84"), crs = 4326, remove = FALSE) %>%
+        st_transform(st_crs(iris_zone_etude))
+
+      atmo_join <- st_join(
+        atmo_sf,
+        iris_zone_etude %>% dplyr::select(Code_IRIS, iris_name),
+        left = FALSE
+      )
+
+      atmo_iris <- atmo_join %>%
+        st_drop_geometry() %>%
+        group_by(Code_IRIS) %>%
+        summarise(
+          Atmo_NO2_moy_iris = ifelse(all(is.na(conc_no2)), NA_real_, mean(conc_no2, na.rm = TRUE)),
+          Atmo_PM10_moy_iris = ifelse(all(is.na(conc_pm10)), NA_real_, mean(conc_pm10, na.rm = TRUE)),
+          Atmo_PM25_moy_iris = ifelse(all(is.na(conc_pm25)), NA_real_, mean(conc_pm25, na.rm = TRUE)),
+          .groups = "drop"
+        )
+
+      iris_zone_etude <- iris_zone_etude %>%
+        dplyr::select(-any_of(c("Atmo_NO2_moy_iris", "Atmo_PM10_moy_iris", "Atmo_PM25_moy_iris"))) %>%
+        left_join(atmo_iris, by = "Code_IRIS")
+
+      atmo_iris_tbl <- iris_zone_etude %>%
+        st_drop_geometry() %>%
+        dplyr::select(Code_IRIS, iris_name, Atmo_NO2_moy_iris, Atmo_PM10_moy_iris, Atmo_PM25_moy_iris) %>%
+        arrange(desc(Atmo_NO2_moy_iris), iris_name)
+
+      atmo_kpi <- tibble::tibble(
+        indicateur = c(
+          "IRIS avec donnees Atmo",
+          "NO2 moyen (zone Nord)",
+          "PM10 moyen (zone Nord)",
+          "PM2.5 moyen (zone Nord)"
+        ),
+        valeur = c(
+          sum(!is.na(iris_zone_etude$Atmo_NO2_moy_iris)),
+          round(mean(iris_zone_etude$Atmo_NO2_moy_iris, na.rm = TRUE), 2),
+          round(mean(iris_zone_etude$Atmo_PM10_moy_iris, na.rm = TRUE), 2),
+          round(mean(iris_zone_etude$Atmo_PM25_moy_iris, na.rm = TRUE), 2)
+        )
+      )
+    }
+  }
+}
+
+for (v in c("Atmo_NO2_moy_iris", "Atmo_PM10_moy_iris", "Atmo_PM25_moy_iris")) {
+  if (!v %in% names(iris_zone_etude)) iris_zone_etude[[v]] <- NA_real_
+}
+
+map_atmo_feature <- build_feature_map(
+  iris_zone_etude,
+  var = "Atmo_NO2_moy_iris",
+  title_txt = "Feature pollution air: concentration moyenne NO2 par IRIS",
+  legend_title = "NO2 moyen",
+  palette = "YlOrBr"
+)
+```
+
+### Carte feature pollution (NO2 moyen)
+
+```{r}
+map_atmo_feature
+```
+
+Row {data-height=620}
+-----------------------------------------------------------------------
+
+### Tableau pollution par IRIS {data-width=50}
+
+```{r}
+render_scroll_table(
+  atmo_iris_tbl,
+  caption = "Pollution air (Atmo) par IRIS - zone Nord",
+  height_px = 380
+)
+```
+
+### Indicateurs feature pollution {data-width=50}
+
+```{r}
+render_scroll_table(
+  atmo_kpi,
+  caption = "KPI pollution air (Atmo)",
+  height_px = 260
+)
+```
+
+Row {data-height=420}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+<div class="analysis-scroll-box">
+<p>Analyse à ajouter</p>
+</div>
+
+
+PARTIE 3.14: Feature mix commercial BPE (equipements IRIS)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+```{r}
+bpe_zip_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "insee", "bpe_2024", "ds_bpe_iris_2024_geo_2024.zip"),
+  file.path(raw_dirs_search, "insee", "bpe_2024", "ds_bpe_iris_2024_geo_2024.zip")
+))
+
+bpe_iris_tbl <- tibble::tibble(Info = "Source BPE non chargee.")
+bpe_kpi <- tibble::tibble(indicateur = "Source BPE disponible", valeur = "non")
+
+if (!is.na(bpe_zip_path) && file.exists(bpe_zip_path)) {
+  bpe_dt <- tryCatch(
+    data.table::fread(
+      cmd = paste("unzip -p", shQuote(bpe_zip_path)),
+      sep = ";",
+      encoding = "UTF-8",
+      showProgress = FALSE
+    ),
+    error = function(e) NULL
+  )
+
+  if (!is.null(bpe_dt) && nrow(bpe_dt) > 0 && all(c("GEO", "FACILITY_DOM", "FACILITY_TYPE", "OBS_VALUE") %in% names(bpe_dt))) {
+    bpe_dt[, GEO := as.character(GEO)]
+    bpe_dt[, OBS_VALUE_NUM := suppressWarnings(as.numeric(str_replace_all(as.character(OBS_VALUE), ",", ".")))]
+    iris_codes <- unique(as.character(iris_zone_etude$Code_IRIS))
+    bpe_zone <- bpe_dt[GEO %in% iris_codes & is.finite(OBS_VALUE_NUM)]
+
+    if (nrow(bpe_zone) > 0) {
+      bpe_total <- bpe_zone[, .(
+        BPE_total_equipements_iris = sum(OBS_VALUE_NUM, na.rm = TRUE),
+        BPE_types_distincts_iris = data.table::uniqueN(FACILITY_TYPE)
+      ), by = .(Code_IRIS = GEO)]
+
+      bpe_dom_sum <- bpe_zone[, .(obs_dom = sum(OBS_VALUE_NUM, na.rm = TRUE)), by = FACILITY_DOM][order(-obs_dom)]
+      top_dom <- head(as.character(bpe_dom_sum$FACILITY_DOM), 3)
+
+      bpe_dom_wide <- data.table::data.table(Code_IRIS = character())
+      if (length(top_dom) > 0) {
+        bpe_dom_dt <- bpe_zone[FACILITY_DOM %in% top_dom, .(obs_dom = sum(OBS_VALUE_NUM, na.rm = TRUE)), by = .(Code_IRIS = GEO, FACILITY_DOM)]
+        bpe_dom_wide <- data.table::dcast(bpe_dom_dt, Code_IRIS ~ FACILITY_DOM, value.var = "obs_dom", fill = 0)
+        for (dom in top_dom) {
+          if (dom %in% names(bpe_dom_wide)) data.table::setnames(bpe_dom_wide, dom, paste0("BPE_dom_", dom, "_iris"))
+        }
+      }
+
+      bpe_entropy <- bpe_zone[, {
+        s <- sum(OBS_VALUE_NUM, na.rm = TRUE)
+        if (!is.finite(s) || s <= 0) {
+          .(BPE_entropy_mix_iris = NA_real_)
+        } else {
+          p <- OBS_VALUE_NUM / s
+          p <- p[is.finite(p) & p > 0]
+          if (length(p) <= 1) {
+            .(BPE_entropy_mix_iris = 0)
+          } else {
+            .(BPE_entropy_mix_iris = -sum(p * log(p)) / log(length(p)))
+          }
+        }
+      }, by = .(Code_IRIS = GEO)]
+
+      bpe_features <- as_tibble(bpe_total) %>%
+        left_join(as_tibble(bpe_entropy), by = "Code_IRIS")
+      if (nrow(bpe_dom_wide) > 0) {
+        bpe_features <- bpe_features %>% left_join(as_tibble(bpe_dom_wide), by = "Code_IRIS")
+      }
+
+      iris_zone_etude <- iris_zone_etude %>%
+        dplyr::select(-any_of(c("BPE_total_equipements_iris", "BPE_types_distincts_iris", "BPE_entropy_mix_iris", paste0("BPE_dom_", top_dom, "_iris")))) %>%
+        left_join(bpe_features, by = "Code_IRIS")
+
+      bpe_keep_cols <- c("Code_IRIS", "iris_name", "BPE_total_equipements_iris", "BPE_types_distincts_iris", "BPE_entropy_mix_iris", paste0("BPE_dom_", top_dom, "_iris"))
+      bpe_keep_cols <- bpe_keep_cols[bpe_keep_cols %in% names(iris_zone_etude)]
+
+      bpe_iris_tbl <- iris_zone_etude %>%
+        st_drop_geometry() %>%
+        dplyr::select(all_of(bpe_keep_cols)) %>%
+        arrange(desc(BPE_total_equipements_iris), iris_name)
+
+      bpe_kpi <- tibble::tibble(
+        indicateur = c(
+          "IRIS avec donnees BPE",
+          "Nb moyen d'equipements BPE par IRIS",
+          "Nb moyen de types BPE par IRIS",
+          "Entropie moyenne du mix BPE"
+        ),
+        valeur = c(
+          sum(!is.na(iris_zone_etude$BPE_total_equipements_iris)),
+          round(mean(iris_zone_etude$BPE_total_equipements_iris, na.rm = TRUE), 2),
+          round(mean(iris_zone_etude$BPE_types_distincts_iris, na.rm = TRUE), 2),
+          round(mean(iris_zone_etude$BPE_entropy_mix_iris, na.rm = TRUE), 3)
+        )
+      )
+    }
+  }
+}
+
+for (v in c("BPE_total_equipements_iris", "BPE_types_distincts_iris", "BPE_entropy_mix_iris")) {
+  if (!v %in% names(iris_zone_etude)) iris_zone_etude[[v]] <- NA_real_
+}
+
+map_bpe_feature <- build_feature_map(
+  iris_zone_etude,
+  var = "BPE_total_equipements_iris",
+  title_txt = "Feature mix commercial BPE: total d'equipements par IRIS",
+  legend_title = "Nb equipements",
+  palette = "BuPu"
+)
+```
+
+### Carte feature mix commercial BPE (total equipements)
+
+```{r}
+map_bpe_feature
+```
+
+Row {data-height=620}
+-----------------------------------------------------------------------
+
+### Tableau BPE par IRIS {data-width=50}
+
+```{r}
+render_scroll_table(
+  bpe_iris_tbl,
+  caption = "Mix BPE par IRIS - zone Nord",
+  height_px = 380
+)
+```
+
+### Indicateurs feature BPE {data-width=50}
+
+```{r}
+render_scroll_table(
+  bpe_kpi,
+  caption = "KPI mix commercial BPE",
+  height_px = 260
+)
+```
+
+Row {data-height=420}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+<div class="analysis-scroll-box">
+<p>Analyse à ajouter</p>
+</div>
+
+
+PARTIE 3.15: Feature ecosysteme bio local (operateurs certifies)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+```{r}
+ops_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "professionnels_bio", "01_operateursbio.csv_operateursbio.csv"),
+  file.path(raw_dir_report2, "professionnels_bio", "operateursbio.csv")
+))
+geo_path_ops <- ensure_sirene_geo_csv(raw_dir_report2)
+
+ops_bio_iris_tbl <- tibble::tibble(Info = "Sources operateurs BIO non chargees.")
+ops_bio_kpi <- tibble::tibble(indicateur = "Source operateurs BIO disponible", valeur = "non")
+
+if (!is.na(ops_path) && file.exists(ops_path) && !is.na(geo_path_ops) && file.exists(geo_path_ops)) {
+  ops_raw <- safe_read_semicolon(ops_path)
+  names(ops_raw) <- tolower(names(ops_raw))
+  siret_ops_col <- names(ops_raw)[str_detect(names(ops_raw), "^siret$|siret14|num_siret")][1]
+  activ_ops_col <- names(ops_raw)[str_detect(names(ops_raw), "activites|activite")][1]
+
+  geo_raw <- safe_read_semicolon(
+    geo_path_ops,
+    col_select = c("siret", "x", "y", "x_longitude", "y_latitude")
+  )
+  names(geo_raw) <- tolower(names(geo_raw))
+  siret_geo_col <- names(geo_raw)[str_detect(names(geo_raw), "^siret$|siret14|num_siret")][1]
+  x_col <- names(geo_raw)[names(geo_raw) == "x"][1]
+  y_col <- names(geo_raw)[names(geo_raw) == "y"][1]
+  lon_col <- names(geo_raw)[str_detect(names(geo_raw), "x_longitude|longitude|\\blon\\b")][1]
+  lat_col <- names(geo_raw)[str_detect(names(geo_raw), "y_latitude|latitude|\\blat\\b")][1]
+
+  if (!is.na(siret_ops_col) && !is.na(siret_geo_col)) {
+    ops_tbl <- tibble::tibble(
+      siret = str_replace_all(as.character(ops_raw[[siret_ops_col]]), "[^0-9]", ""),
+      activites = if (!is.na(activ_ops_col)) as.character(ops_raw[[activ_ops_col]]) else NA_character_
+    ) %>%
+      filter(!is.na(siret), nchar(siret) == 14) %>%
+      distinct(siret, .keep_all = TRUE)
+
+    geo_tbl <- tibble::tibble(
+      siret = str_replace_all(as.character(geo_raw[[siret_geo_col]]), "[^0-9]", ""),
+      x_num = if (!is.na(x_col)) as_num_feature(geo_raw[[x_col]]) else NA_real_,
+      y_num = if (!is.na(y_col)) as_num_feature(geo_raw[[y_col]]) else NA_real_,
+      lon_num = if (!is.na(lon_col)) as_num_feature(geo_raw[[lon_col]]) else NA_real_,
+      lat_num = if (!is.na(lat_col)) as_num_feature(geo_raw[[lat_col]]) else NA_real_
+    ) %>%
+      filter(!is.na(siret), nchar(siret) == 14) %>%
+      distinct(siret, .keep_all = TRUE)
+
+    ops_geo <- inner_join(ops_tbl, geo_tbl, by = "siret")
+    ops_geo_sf <- NULL
+    if (sum(is.finite(ops_geo$x_num) & is.finite(ops_geo$y_num)) > 0) {
+      ops_geo_sf <- ops_geo %>%
+        filter(is.finite(x_num), is.finite(y_num)) %>%
+        st_as_sf(coords = c("x_num", "y_num"), crs = 2154, remove = FALSE) %>%
+        st_transform(st_crs(iris_zone_etude))
+    } else if (sum(is.finite(ops_geo$lon_num) & is.finite(ops_geo$lat_num)) > 0) {
+      ops_geo_sf <- ops_geo %>%
+        filter(is.finite(lon_num), is.finite(lat_num)) %>%
+        st_as_sf(coords = c("lon_num", "lat_num"), crs = 4326, remove = FALSE) %>%
+        st_transform(st_crs(iris_zone_etude))
+    }
+
+    if (!is.null(ops_geo_sf) && nrow(ops_geo_sf) > 0) {
+      ops_geo_sf <- ops_geo_sf %>%
+        mutate(
+          flag_prod = str_detect(str_to_upper(activites), "PRODUCTION"),
+          flag_dist = str_detect(str_to_upper(activites), "DISTRIBUTION"),
+          flag_prep = str_detect(str_to_upper(activites), "PREPARATION|PR[ÉE]PARATION")
+        )
+
+      ops_join <- st_join(
+        ops_geo_sf,
+        iris_zone_etude %>% dplyr::select(Code_IRIS, iris_name),
+        left = FALSE
+      )
+
+      ops_iris <- ops_join %>%
+        st_drop_geometry() %>%
+        group_by(Code_IRIS) %>%
+        summarise(
+          Nb_opbio_total_iris = n(),
+          Nb_opbio_prod_iris = sum(flag_prod, na.rm = TRUE),
+          Nb_opbio_dist_iris = sum(flag_dist, na.rm = TRUE),
+          Nb_opbio_prep_iris = sum(flag_prep, na.rm = TRUE),
+          .groups = "drop"
+        )
+
+      iris_zone_etude <- iris_zone_etude %>%
+        dplyr::select(-any_of(c("Nb_opbio_total_iris", "Nb_opbio_prod_iris", "Nb_opbio_dist_iris", "Nb_opbio_prep_iris"))) %>%
+        left_join(ops_iris, by = "Code_IRIS")
+
+      ops_bio_iris_tbl <- iris_zone_etude %>%
+        st_drop_geometry() %>%
+        dplyr::select(Code_IRIS, iris_name, Nb_opbio_total_iris, Nb_opbio_prod_iris, Nb_opbio_dist_iris, Nb_opbio_prep_iris) %>%
+        arrange(desc(Nb_opbio_total_iris), iris_name)
+
+      ops_bio_kpi <- tibble::tibble(
+        indicateur = c(
+          "Operateurs BIO geolocalises dans la zone",
+          "IRIS avec >=1 operateur BIO",
+          "Nb moyen operateurs BIO par IRIS",
+          "Part production dans operateurs BIO (%)"
+        ),
+        valeur = c(
+          nrow(ops_join),
+          sum(iris_zone_etude$Nb_opbio_total_iris > 0, na.rm = TRUE),
+          round(mean(iris_zone_etude$Nb_opbio_total_iris, na.rm = TRUE), 2),
+          round(100 * sum(iris_zone_etude$Nb_opbio_prod_iris, na.rm = TRUE) / pmax(1, sum(iris_zone_etude$Nb_opbio_total_iris, na.rm = TRUE)), 2)
+        )
+      )
+    }
+  }
+}
+
+for (v in c("Nb_opbio_total_iris", "Nb_opbio_prod_iris", "Nb_opbio_dist_iris", "Nb_opbio_prep_iris")) {
+  if (!v %in% names(iris_zone_etude)) iris_zone_etude[[v]] <- NA_real_
+}
+
+map_ops_bio_feature <- build_feature_map(
+  iris_zone_etude,
+  var = "Nb_opbio_total_iris",
+  title_txt = "Feature ecosysteme BIO: nombre d'operateurs certifies par IRIS",
+  legend_title = "Nb operateurs BIO",
+  palette = "Greens"
+)
+```
+
+### Carte feature ecosysteme BIO (operateurs certifies)
+
+```{r}
+map_ops_bio_feature
+```
+
+Row {data-height=620}
+-----------------------------------------------------------------------
+
+### Tableau ecosysteme BIO par IRIS {data-width=50}
+
+```{r}
+render_scroll_table(
+  ops_bio_iris_tbl,
+  caption = "Operateurs BIO certifies par IRIS - zone Nord",
+  height_px = 380
+)
+```
+
+### Indicateurs feature ecosysteme BIO {data-width=50}
+
+```{r}
+render_scroll_table(
+  ops_bio_kpi,
+  caption = "KPI ecosysteme BIO local",
+  height_px = 260
+)
+```
+
+Row {data-height=420}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+<div class="analysis-scroll-box">
+<p>Analyse à ajouter</p>
+</div>
+
+
+PARTIE 3.16: Feature tension fonciere (DVF 2025, proxy commune -> IRIS)
+=======================================================================
+
+Row {data-height=1000}
+-----------------------------------------------------------------------
+
+```{r}
+dvf_2025_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "dvf", "01_Valeurs_fonci_res_2025_valeursfoncieres-2025.txt.zip"),
+  file.path(raw_dirs_search, "dvf", "01_Valeurs_fonci_res_2025_valeursfoncieres-2025.txt.zip")
+))
+
+dvf_iris_tbl <- tibble::tibble(Info = "Source DVF 2025 non chargee.")
+dvf_kpi <- tibble::tibble(indicateur = "Source DVF disponible", valeur = "non")
+
+if (!is.na(dvf_2025_path) && file.exists(dvf_2025_path)) {
+  dvf_cmd <- paste("unzip -p", shQuote(dvf_2025_path), "| awk -F'|' 'NR==1 || $19==\"38\"'")
+  dvf_dt <- tryCatch(
+    data.table::fread(
+      cmd = dvf_cmd,
+      sep = "|",
+      encoding = "UTF-8",
+      showProgress = FALSE
+    ),
+    error = function(e) NULL
+  )
+
+  if (!is.null(dvf_dt) && nrow(dvf_dt) > 0) {
+    data.table::setnames(dvf_dt, make.names(names(dvf_dt)))
+    req_dvf <- c("Valeur.fonciere", "Type.local", "Surface.reelle.bati", "Commune")
+    if (all(req_dvf %in% names(dvf_dt))) {
+      dvf_tbl <- as_tibble(dvf_dt) %>%
+        transmute(
+          commune = as.character(Commune),
+          type_local = as.character(Type.local),
+          valeur_fonciere = as_num_feature(Valeur.fonciere),
+          surface_bati = as_num_feature(Surface.reelle.bati)
+        ) %>%
+        filter(
+          !is.na(commune), str_squish(commune) != "",
+          is.finite(valeur_fonciere), valeur_fonciere > 0,
+          is.finite(surface_bati), surface_bati > 0,
+          type_local %in% c("Appartement", "Maison")
+        ) %>%
+        mutate(
+          prix_m2 = valeur_fonciere / surface_bati,
+          commune_norm = normalize_commune(commune)
+        )
+
+      if (nrow(dvf_tbl) > 0) {
+        dvf_commune <- dvf_tbl %>%
+          group_by(commune_norm) %>%
+          summarise(
+            DVF_prix_m2_commune_2025 = median(prix_m2, na.rm = TRUE),
+            DVF_nb_transactions_commune_2025 = n(),
+            .groups = "drop"
+          )
+
+        iris_zone_etude <- iris_zone_etude %>%
+          mutate(commune_norm_tmp = normalize_commune(com_name)) %>%
+          dplyr::select(-any_of(c("DVF_prix_m2_commune_2025", "DVF_nb_transactions_commune_2025", "DVF_tension_index_2025"))) %>%
+          left_join(dvf_commune, by = c("commune_norm_tmp" = "commune_norm"))
+
+        pmin_dvf <- suppressWarnings(min(iris_zone_etude$DVF_prix_m2_commune_2025, na.rm = TRUE))
+        pmax_dvf <- suppressWarnings(max(iris_zone_etude$DVF_prix_m2_commune_2025, na.rm = TRUE))
+        if (!is.finite(pmin_dvf) || !is.finite(pmax_dvf) || pmax_dvf <= pmin_dvf) {
+          iris_zone_etude$DVF_tension_index_2025 <- NA_real_
+        } else {
+          iris_zone_etude$DVF_tension_index_2025 <- 100 * (iris_zone_etude$DVF_prix_m2_commune_2025 - pmin_dvf) / (pmax_dvf - pmin_dvf)
+        }
+        iris_zone_etude <- iris_zone_etude %>% dplyr::select(-any_of("commune_norm_tmp"))
+
+        dvf_iris_tbl <- iris_zone_etude %>%
+          st_drop_geometry() %>%
+          dplyr::select(Code_IRIS, iris_name, com_name, DVF_prix_m2_commune_2025, DVF_nb_transactions_commune_2025, DVF_tension_index_2025) %>%
+          arrange(desc(DVF_prix_m2_commune_2025), iris_name)
+
+        dvf_kpi <- tibble::tibble(
+          indicateur = c(
+            "IRIS avec proxy DVF",
+            "Prix median m2 moyen (commune, EUR/m2)",
+            "Transactions moyennes (proxy commune)",
+            "Indice moyen de tension fonciere"
+          ),
+          valeur = c(
+            sum(!is.na(iris_zone_etude$DVF_prix_m2_commune_2025)),
+            round(mean(iris_zone_etude$DVF_prix_m2_commune_2025, na.rm = TRUE), 0),
+            round(mean(iris_zone_etude$DVF_nb_transactions_commune_2025, na.rm = TRUE), 0),
+            round(mean(iris_zone_etude$DVF_tension_index_2025, na.rm = TRUE), 2)
+          )
+        )
+      }
+    }
+  }
+}
+
+for (v in c("DVF_prix_m2_commune_2025", "DVF_nb_transactions_commune_2025", "DVF_tension_index_2025")) {
+  if (!v %in% names(iris_zone_etude)) iris_zone_etude[[v]] <- NA_real_
+}
+
+map_dvf_feature <- build_feature_map(
+  iris_zone_etude,
+  var = "DVF_prix_m2_commune_2025",
+  title_txt = "Feature tension fonciere: prix median m2 (proxy commune, DVF 2025)",
+  legend_title = "Prix median m2",
+  palette = "RdPu"
+)
+```
+
+### Carte feature tension fonciere (prix median m2)
+
+```{r}
+map_dvf_feature
+```
+
+Row {data-height=620}
+-----------------------------------------------------------------------
+
+### Tableau DVF proxy par IRIS {data-width=50}
+
+```{r}
+render_scroll_table(
+  dvf_iris_tbl,
+  caption = "Proxy tension fonciere (DVF 2025, niveau commune projete sur IRIS)",
+  height_px = 380
+)
+```
+
+### Indicateurs feature tension fonciere {data-width=50}
+
+```{r}
+render_scroll_table(
+  dvf_kpi,
+  caption = "KPI tension fonciere (DVF 2025)",
+  height_px = 260
+)
+```
+
+Row {data-height=420}
+-----------------------------------------------------------------------
+
+### Commentaire d’analyse
+
+<div class="analysis-scroll-box">
+<p>Analyse à ajouter</p>
+</div>
 
 
 PARTIE 4: Analyse de la concurrence
@@ -2223,11 +4475,11 @@ if (!is.null(otpcon)) {
 ```{r, results='hide'}
 # SIRENE
 sirene_layer_avant <- "dataseed-sirene-2"
-sirene_dsn_avant_candidates <- c(
-  file.path(cours_dir, "data", "raw"),
+sirene_dsn_avant_candidates <- unique(c(
+  raw_dirs_search,
   file.path(cours_dir, "data", "actif"),
   file.path(cours_dir, "data")
-)
+))
 sirene_dsn_avant <- sirene_dsn_avant_candidates[
   file.exists(file.path(sirene_dsn_avant_candidates, paste0(sirene_layer_avant, ".shp")))
 ][1]
@@ -2499,15 +4751,16 @@ bio_physique_2025 <- sirene_zone_etude %>%
   )
 
 # 1) Couche "alternatifs" issue du crossref drives (proxy retrait/e-commerce)
-crossref_candidates <- c(
-  file.path(cours_dir, "data", "processed", "crossref_supermarches_drives_zone_v3.csv"),
-  file.path(cours_dir, "data", "processed", "crossref_supermarches_drives_zone.csv"),
-  file.path(cours_dir, "data", "processed", "crossref_supermarches_drives.csv")
-)
-crossref_path <- crossref_candidates[file.exists(crossref_candidates)][1]
+crossref_candidates <- unique(na.omit(c(
+  if (!is.na(processed_dir_report2)) file.path(processed_dir_report2, "crossref_bio_ecommerce_zone_2025.csv"),
+  if (!is.na(processed_dir_report2)) file.path(processed_dir_report2, "crossref_supermarches_drives_zone_v3.csv"),
+  if (!is.na(processed_dir_report2)) file.path(processed_dir_report2, "crossref_supermarches_drives_zone.csv"),
+  if (!is.na(processed_dir_report2)) file.path(processed_dir_report2, "crossref_supermarches_drives.csv")
+)))
+crossref_path <- first_existing_path(crossref_candidates)
 
 if (is.na(crossref_path)) {
-  message("Aucun fichier crossref drives trouve dans data/processed. Couche alternatifs crossref vide.")
+  message("Aucun fichier crossref alternatifs BIO trouve dans rapport_2/data/processed. Couche alternatifs crossref vide.")
   alt_drive_2025 <- bio_physique_2025[0, ] %>%
     mutate(type_alternatif = character(), source_alt = character(), match_method = character())
 } else {
@@ -2537,9 +4790,9 @@ if (is.na(crossref_path)) {
 
 # 2) Couche "alternatifs" externe (optionnelle): e-commerce / circuits alternatifs
 alt_raw_candidates <- c(
-  file.path(raw_dir, "bio_ecommerce_circuits_alternatifs.csv"),
-  file.path(raw_dir, "ecommerce_circuits_alternatifs.csv"),
-  file.path(raw_dir, "circuits_alternatifs_bio.csv")
+  file.path(raw_dirs_search, "bio_ecommerce_circuits_alternatifs.csv"),
+  file.path(raw_dirs_search, "ecommerce_circuits_alternatifs.csv"),
+  file.path(raw_dirs_search, "circuits_alternatifs_bio.csv")
 )
 alt_raw_path <- alt_raw_candidates[file.exists(alt_raw_candidates)][1]
 
@@ -4127,10 +6380,13 @@ super_hyper_ca <- sirene_zone_etude %>%
     ca_2024 = NA_real_
   )
 
-pappers_ca_path <- file.path(raw_dir, "papersBIO.csv")
+pappers_ca_path <- first_existing_path(c(
+  file.path(raw_dirs_search, "papersBIO.csv"),
+  file.path(raw_dirs_search, "ca", "papersBIO.csv")
+))
 pappers_ca_loaded <- FALSE
 
-if (file.exists(pappers_ca_path)) {
+if (!is.na(pappers_ca_path) && file.exists(pappers_ca_path)) {
   pappers_ca <- suppressMessages(readr::read_delim(
     pappers_ca_path,
     delim = ";",
@@ -4183,9 +6439,9 @@ if (file.exists(pappers_ca_path)) {
 }
 
 crossref_candidates_ca <- c(
-  file.path(processed_dir, "crossref_supermarches_drives_zone_v3.csv"),
-  file.path(processed_dir, "crossref_supermarches_drives_zone.csv"),
-  file.path(processed_dir, "crossref_supermarches_drives.csv")
+  file.path(processed_dirs_search, "crossref_supermarches_drives_zone_v3.csv"),
+  file.path(processed_dirs_search, "crossref_supermarches_drives_zone.csv"),
+  file.path(processed_dirs_search, "crossref_supermarches_drives.csv")
 )
 crossref_ca_path <- crossref_candidates_ca[file.exists(crossref_candidates_ca)][1]
 
@@ -5128,3 +7384,235 @@ Row {data-height=900}
 <div class="analysis-scroll-box analysis-scroll-box--long">
 <p>Analyse à ajouter</p>
 </div>
+
+PARTIE 12: Nouvelles features (donnees telechargees)
+=======================================================================
+
+Row {data-height=900}
+-----------------------------------------------------------------------
+
+### Couverture des donnees telechargees {data-width=50}
+
+```{r}
+sirene_geo_csv_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "sirene", "GeolocalisationEtablissement_Sirene_pour_etudes_statistiques_utf8.csv"),
+  file.path(raw_dir_report2, "sirene", "sirene_geo_etudes.csv")
+))
+sirene_geo_zip_path <- file.path(raw_dir_report2, "sirene", "sirene_geo_etudes.zip")
+sirene_geo_parquet_path <- file.path(raw_dir_report2, "sirene", "sirene_geo_etudes.parquet")
+operateurs_bio_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "professionnels_bio", "01_operateursbio.csv_operateursbio.csv"),
+  file.path(raw_dir_report2, "professionnels_bio", "operateursbio.csv")
+))
+rp2022_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "insee", "rp_2022", "base-ic-evol-struct-pop-2022_csv.zip")
+))
+bpe2024_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "insee", "bpe_2024", "BPE24.parquet"),
+  file.path(raw_dir_report2, "insee", "bpe_2024", "ds_bpe_iris_2024_geo_2024.zip")
+))
+parkings_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "mobilite", "stationnement", "lieuxstationnements_lametro.csv")
+))
+velo_path <- first_existing_path(c(
+  file.path(raw_dir_report2, "mobilite", "velo", "pistes_49_communes.json"),
+  file.path(raw_dir_report2, "mobilite", "velo", "pistes_api_lametro.json")
+))
+dvf_paths <- file.path(raw_dir_report2, "dvf", c(
+  "01_Valeurs_fonci_res_2025_valeursfoncieres-2025.txt.zip",
+  "02_Valeurs_fonci_res_2024_valeursfoncieres-2024.txt.zip",
+  "03_Valeurs_fonci_res_2023_valeursfoncieres-2023.txt.zip",
+  "04_Valeurs_fonci_res_2022_valeursfoncieres-2022.txt.zip",
+  "05_Valeurs_fonci_res_2021_valeursfoncieres-2021.txt.zip"
+))
+
+summarise_raw_by_theme <- function(root_dir) {
+  if (is.na(root_dir) || !dir.exists(root_dir)) {
+    return(tibble::tibble(theme = character(), nb_fichiers = integer(), taille_Mo = numeric()))
+  }
+  files <- list.files(root_dir, recursive = TRUE, full.names = TRUE)
+  files <- files[file.info(files)$isdir %in% FALSE]
+  if (length(files) == 0) {
+    return(tibble::tibble(theme = character(), nb_fichiers = integer(), taille_Mo = numeric()))
+  }
+  info <- file.info(files)
+  rel <- gsub(paste0("^", normalizePath(root_dir), "/?"), "", normalizePath(files))
+  theme <- vapply(strsplit(rel, "/", fixed = TRUE), function(x) if (length(x) > 0) x[1] else "racine", character(1))
+  tibble::tibble(
+    theme = theme,
+    taille_Mo = info$size / (1024^2)
+  ) %>%
+    group_by(theme) %>%
+    summarise(
+      nb_fichiers = n(),
+      taille_Mo = round(sum(taille_Mo, na.rm = TRUE), 2),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(taille_Mo), desc(nb_fichiers), theme)
+}
+
+feature_status <- tibble::tibble(
+  source = c(
+    "SIRENE geo CSV (pret a lire)",
+    "SIRENE geo ZIP",
+    "SIRENE geo Parquet",
+    "Operateurs BIO (Agence BIO)",
+    "RP INSEE 2022",
+    "BPE 2024",
+    "Mobilite stationnement",
+    "Mobilite velo",
+    "DVF 2021-2025 (zips)"
+  ),
+  usage_rapport = c(
+    "Base principale des ponctuels BIO (si disponible)",
+    "Fallback extraction CSV SIRENE",
+    "Alternative technique (non prioritaire)",
+    "Feature 3.1 (BIO certifie)",
+    "Variables socio-demo (3.2 a 3.5)",
+    "Contexte equipements / concurrence locale",
+    "Feature 3.6 (stationnement)",
+    "Feature 3.6 (reseau velo)",
+    "Reserve pour approfondissement pouvoir d'achat"
+  ),
+  disponible = c(
+    !is.na(sirene_geo_csv_path) && file.exists(sirene_geo_csv_path),
+    file.exists(sirene_geo_zip_path),
+    file.exists(sirene_geo_parquet_path),
+    !is.na(operateurs_bio_path) && file.exists(operateurs_bio_path),
+    !is.na(rp2022_path) && file.exists(rp2022_path),
+    !is.na(bpe2024_path) && file.exists(bpe2024_path),
+    !is.na(parkings_path) && file.exists(parkings_path),
+    !is.na(velo_path) && file.exists(velo_path),
+    all(file.exists(dvf_paths))
+  ),
+  chemin = c(
+    ifelse(is.na(sirene_geo_csv_path), "", sirene_geo_csv_path),
+    sirene_geo_zip_path,
+    sirene_geo_parquet_path,
+    ifelse(is.na(operateurs_bio_path), "", operateurs_bio_path),
+    ifelse(is.na(rp2022_path), "", rp2022_path),
+    ifelse(is.na(bpe2024_path), "", bpe2024_path),
+    ifelse(is.na(parkings_path), "", parkings_path),
+    ifelse(is.na(velo_path), "", velo_path),
+    paste(dvf_paths, collapse = " | ")
+  )
+)
+
+raw_theme_summary <- summarise_raw_by_theme(raw_dir_report2)
+coverage_summary <- tibble::tibble(
+  indicateur = c("Nb themes detectes", "Nb fichiers telecharges", "Volume total (Mo)"),
+  valeur = c(
+    nrow(raw_theme_summary),
+    sum(raw_theme_summary$nb_fichiers, na.rm = TRUE),
+    round(sum(raw_theme_summary$taille_Mo, na.rm = TRUE), 2)
+  )
+)
+
+render_scroll_table(
+  bind_rows(
+    coverage_summary %>% mutate(theme = "RESUME", disponible = NA, usage_rapport = "", chemin = "") %>%
+      select(theme, indicateur, valeur, disponible, usage_rapport, chemin),
+    raw_theme_summary %>% mutate(indicateur = "Fichiers par theme", valeur = nb_fichiers, disponible = NA, usage_rapport = "", chemin = "") %>%
+      select(theme, indicateur, valeur, disponible, usage_rapport, chemin)
+  ),
+  caption = "Couverture des donnees telechargees (rapport_2/data/raw)",
+  height_px = 760,
+  nowrap = TRUE
+)
+```
+
+### Valeur analytique des nouvelles features {data-width=50}
+
+```{r}
+safe_nrow <- function(x) {
+  if (is.null(x)) return(0L)
+  if (!is.data.frame(x) && !inherits(x, "sf")) return(0L)
+  nrow(x)
+}
+
+nb_bio_points <- safe_nrow(sirene_zone_etude)
+nb_bio_source_ops <- if ("source_bio" %in% names(sirene_zone_etude)) {
+  sum(as.character(sirene_zone_etude$source_bio) == "rapport2_sirene_geo_operateursbio", na.rm = TRUE)
+} else {
+  NA_integer_
+}
+nb_bio_source_csv <- if ("source_bio" %in% names(sirene_zone_etude)) {
+  sum(as.character(sirene_zone_etude$source_bio) == "enseignesBIO_csv", na.rm = TRUE)
+} else {
+  NA_integer_
+}
+nb_alt_total <- if (exists("alternatifs_2025")) safe_nrow(alternatifs_2025) else 0L
+nb_alt_crossref <- if (exists("alternatifs_2025") && "source_alt" %in% names(alternatifs_2025)) {
+  sum(as.character(alternatifs_2025$source_alt) == "crossref_drives", na.rm = TRUE)
+} else {
+  0L
+}
+nb_alt_externe <- if (exists("alternatifs_2025") && "source_alt" %in% names(alternatifs_2025)) {
+  sum(as.character(alternatifs_2025$source_alt) == "fichier_externe", na.rm = TRUE)
+} else {
+  0L
+}
+nb_iris_alt <- if ("Nb_drives_2025" %in% names(iris_zone_etude)) {
+  sum(as.numeric(iris_zone_etude$Nb_drives_2025) > 0, na.rm = TRUE)
+} else {
+  NA_integer_
+}
+nb_parkings <- if (exists("parkings_zone")) safe_nrow(parkings_zone) else NA_integer_
+velo_km <- if (exists("velo_zone") && safe_nrow(velo_zone) > 0) {
+  round(sum(as.numeric(st_length(st_geometry(velo_zone))), na.rm = TRUE) / 1000, 2)
+} else {
+  NA_real_
+}
+top1_txt <- if (exists("top1_iris_name") && !is.na(top1_iris_name) && str_squish(top1_iris_name) != "") {
+  top1_iris_name
+} else {
+  "Non calcule"
+}
+
+feature_kpi <- tibble::tibble(
+  indicateur = c(
+    "Points BIO physiques 2025 (zone Nord)",
+    "Points BIO issus operateurs_bio",
+    "Points BIO ajoutes via enseignesBIO.csv",
+    "Points e-commerce/circuits alternatifs 2025",
+    "Dont issus crossref rapport_2",
+    "Dont issus fichier externe alt",
+    "IRIS avec >=1 alternatif",
+    "Nb parkings publics integres",
+    "Longueur pistes velo integrees (km)",
+    "IRIS Top 1 pour implantation"
+  ),
+  valeur = c(
+    nb_bio_points, nb_bio_source_ops, nb_bio_source_csv,
+    nb_alt_total, nb_alt_crossref, nb_alt_externe,
+    nb_iris_alt, nb_parkings, velo_km, top1_txt
+  ),
+  lecture = c(
+    "Base exploitable pour la concurrence BIO physique.",
+    "Qualifie la part issue d'une source certifiante externe.",
+    "Mesure l'apport manuel de la liste enseignes.",
+    "Mesure la couche 'alternatifs' effectivement mobilisee.",
+    "Verifie que le crossref vient bien de rapport_2.",
+    "Contribution de la liste e-commerce/circuits alternatifs.",
+    "Diffusion spatiale des alternatives dans la zone.",
+    "Niveau de service voiture autour des IRIS.",
+    "Niveau de service cyclable autour des IRIS.",
+    "Sortie directe du pipeline de scoring."
+  )
+)
+
+source_usage_tbl <- feature_status %>%
+  mutate(disponible = ifelse(disponible, "oui", "non")) %>%
+  select(Source = source, Disponible = disponible, Usage = usage_rapport)
+
+render_scroll_table(
+  bind_rows(
+    feature_kpi %>% mutate(section = "KPI produits") %>% select(section, everything()),
+    source_usage_tbl %>% mutate(section = "Sources mobilisees", indicateur = Source, valeur = Disponible, lecture = Usage) %>%
+      select(section, indicateur, valeur, lecture)
+  ),
+  caption = "Valeur analytique des nouvelles features (ce qui est utile et exploite)",
+  height_px = 760,
+  nowrap = TRUE
+)
+```
